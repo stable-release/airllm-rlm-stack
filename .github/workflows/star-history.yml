@@ -1,0 +1,51 @@
+name: Refresh Star History
+
+# Regenerates assets/star-history.png daily and commits it if it changed.
+# We render the chart ourselves from the authenticated GitHub API (see
+# scripts/gen_star_history.py) instead of embedding the anonymous
+# star-history.com SVG API, which is rate-limited and returns an empty chart
+# for large repos. The README embeds the committed PNG, so it always renders.
+#
+# The chart is built from GraphQL, not REST. GitHub restricted REST /stargazers to
+# admins/collaborators in 2026-06, and then refused fine-grained tokens on it outright
+# ("Resource not accessible by personal access token"), which broke this job twice on
+# token permissions alone. GraphQL returns the same public starredAt data without that
+# gate, so the default Actions GITHUB_TOKEN is enough and no PAT is required.
+#
+# The STAR_HISTORY_TOKEN secret this used to need is now unused and can be deleted; do
+# not add a PAT back if this fails, since a token was never the real fix.
+
+on:
+  schedule:
+    - cron: "0 6 * * *" # daily at 06:00 UTC
+  workflow_dispatch:
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: python -m pip install --upgrade matplotlib
+
+      - name: Generate star history charts (light + dark)
+        env:
+          # The built-in token is enough for GraphQL, so no secret is involved.
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/gen_star_history.py "${{ github.repository }}" \
+            assets/star-history.png light \
+            assets/star-history-dark.png dark
+
+      - name: Commit if changed
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore: refresh star history chart"
+          file_pattern: "assets/star-history.png assets/star-history-dark.png"

@@ -1,0 +1,19 @@
+.idea
+.ipynb_checkpoints
+.DS_Store
+airllm.egg-info
+build
+dist
+__pycache__
+# Package README is generated from the top-level README.md at build time
+air_llm/README.md
+
+# Local model/runtime stack (see LOCAL_SETUP.md) — multi-GB artifacts, never commit
+models/
+runtime/
+.cargo/
+.venv/
+rlm-rs/target/
+rlm-rs/rlm_memory.json
+# Local config names the actual model files — keep it out of the repo (see rlm.config.example.json)
+rlm-rs/rlm.config.json
