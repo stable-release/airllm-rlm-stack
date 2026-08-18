@@ -7,7 +7,14 @@
   "n_gpu_layers": 36,
   "kv_cache_type": "q8_0",
   "flash_attn": true,
-  "extra_server_args": ["--spec-type", "draft-mtp", "--spec-draft-n-max", "1"],
+  "extra_server_args": [
+    "--spec-type",
+    "draft-mtp",
+    "--spec-draft-n-max",
+    "1",
+    "--alias",
+    "local-main"
+  ],
   "worker_port": 8092,
   "worker_model_path": "",
   "worker_ctx": 8192,

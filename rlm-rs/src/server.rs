@@ -34,6 +34,8 @@ pub fn ensure_server(cfg: &RlmConfig, client: &LlmClient) -> Result<bool> {
 /// Ensure the worker llama-server (leaf sub-call model) is up, when configured.
 pub fn ensure_worker(cfg: &RlmConfig, worker_client: &LlmClient) -> Result<bool> {
     let Some(port) = cfg.worker_port else { return Ok(false) };
+    // A clean model alias so OpenAI-compatible clients can tell the tiers apart.
+    let worker_args = ["--alias".to_string(), "local-worker".to_string()];
     ensure(
         cfg,
         worker_client,
@@ -43,7 +45,7 @@ pub fn ensure_worker(cfg: &RlmConfig, worker_client: &LlmClient) -> Result<bool>
             port,
             ctx: cfg.worker_ctx,
             n_gpu_layers: cfg.worker_n_gpu_layers,
-            extra_args: &[],
+            extra_args: &worker_args,
         },
     )
 }
