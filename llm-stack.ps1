@@ -46,12 +46,19 @@ $llamaArgs = "-m `"$($llamaModel.FullName)`" --host $($cfg.host) --port $($cfg.p
 if ($cfg.flash_attn)    { $llamaArgs += " -fa on" }
 if ($cfg.kv_cache_type) { $llamaArgs += " --cache-type-k $($cfg.kv_cache_type) --cache-type-v $($cfg.kv_cache_type)" }
 if ($null -ne $cfg.n_gpu_layers) { $llamaArgs += " -ngl $($cfg.n_gpu_layers)" }
-if ($cfg.extra_server_args) { $llamaArgs += " " + ($cfg.extra_server_args -join ' ') }
+# Quote-wrap extra args containing specials (e.g. JSON values for --chat-template-kwargs)
+# so they survive the cmd wrapper as single arguments.
+if ($cfg.extra_server_args) {
+    $quoted = $cfg.extra_server_args | ForEach-Object {
+        if ($_ -match '[\s"{}]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ }
+    }
+    $llamaArgs += " " + ($quoted -join ' ')
+}
 $airllmPy   = "$root\.venv\Scripts\python.exe"
 $airllmPort = 8091
 $airllmArgs = "`"$root\serve_airllm.py`" --model `"$($airllmModel.FullName)`" --port $airllmPort"
 $workerPort = if ($cfg.worker_port) { $cfg.worker_port } else { 8092 }
-$workerArgs = "-m `"$($workerModel.FullName)`" --alias local-worker --host $($cfg.host) --port $workerPort -c $($cfg.worker_ctx) --jinja"
+$workerArgs = "-m `"$($workerModel.FullName)`" --alias local-worker --chat-template-kwargs " + '"{\"enable_thinking\":false}"' + " --host $($cfg.host) --port $workerPort -c $($cfg.worker_ctx) --jinja"
 if ($cfg.flash_attn)    { $workerArgs += " -fa on" }
 if ($cfg.kv_cache_type) { $workerArgs += " --cache-type-k $($cfg.kv_cache_type) --cache-type-v $($cfg.kv_cache_type)" }
 if ($null -ne $cfg.worker_n_gpu_layers) { $workerArgs += " -ngl $($cfg.worker_n_gpu_layers)" }

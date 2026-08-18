@@ -34,8 +34,14 @@ pub fn ensure_server(cfg: &RlmConfig, client: &LlmClient) -> Result<bool> {
 /// Ensure the worker llama-server (leaf sub-call model) is up, when configured.
 pub fn ensure_worker(cfg: &RlmConfig, worker_client: &LlmClient) -> Result<bool> {
     let Some(port) = cfg.worker_port else { return Ok(false) };
-    // A clean model alias so OpenAI-compatible clients can tell the tiers apart.
-    let worker_args = ["--alias".to_string(), "local-worker".to_string()];
+    // Clean alias for OpenAI-compatible clients, and no-thinking as the template
+    // default (rlm's own requests still choose explicitly per request).
+    let worker_args = [
+        "--alias".to_string(),
+        "local-worker".to_string(),
+        "--chat-template-kwargs".to_string(),
+        "{\"enable_thinking\":false}".to_string(),
+    ];
     ensure(
         cfg,
         worker_client,

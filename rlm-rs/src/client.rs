@@ -62,14 +62,14 @@ impl LlmClient {
 
     /// OpenAI-compatible chat completion against llama-server.
     pub fn chat(&self, messages: &[ChatMessage], max_tokens: u32) -> Result<String> {
-        let mut body = json!({
+        // Always sent explicitly so the per-request choice overrides whatever
+        // server-wide default --chat-template-kwargs establishes.
+        let body = json!({
             "messages": messages,
             "max_tokens": max_tokens,
             "temperature": self.temperature,
+            "chat_template_kwargs": {"enable_thinking": self.thinking},
         });
-        if !self.thinking {
-            body["chat_template_kwargs"] = json!({"enable_thinking": false});
-        }
         let resp: Value = self
             .agent
             .post(&format!("{}/v1/chat/completions", self.base_url))

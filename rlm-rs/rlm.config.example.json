@@ -13,7 +13,9 @@
     "--spec-draft-n-max",
     "1",
     "--alias",
-    "local-main"
+    "local-main",
+    "--chat-template-kwargs",
+    "{\"enable_thinking\":false}"
   ],
   "worker_port": 8092,
   "worker_model_path": "",
