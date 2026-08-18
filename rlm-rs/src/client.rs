@@ -24,6 +24,11 @@ impl ChatMessage {
 
 impl LlmClient {
     pub fn new(cfg: &RlmConfig) -> Self {
+        Self::for_port(cfg, cfg.port)
+    }
+
+    /// Client against a specific port on the configured host (e.g. the worker model).
+    pub fn for_port(cfg: &RlmConfig, port: u16) -> Self {
         let agent = ureq::AgentBuilder::new()
             .timeout_connect(Duration::from_secs(10))
             // Big models on partial offload can be slow; give generation plenty of room.
@@ -31,7 +36,7 @@ impl LlmClient {
             .build();
         LlmClient {
             agent,
-            base_url: cfg.base_url(),
+            base_url: format!("http://{}:{}", cfg.host, port),
             temperature: cfg.temperature,
         }
     }

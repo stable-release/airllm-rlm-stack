@@ -37,6 +37,15 @@ pub struct RlmConfig {
     pub flash_attn: bool,
     /// Extra raw llama-server arguments appended verbatim.
     pub extra_server_args: Vec<String>,
+    /// Fast worker model for leaf sub-calls (llm / llm_on single-shot). None routes
+    /// everything to the main model. Root-loop reasoning always stays on the main model.
+    pub worker_port: Option<u16>,
+    /// Worker GGUF; empty auto-discovers the smallest .gguf under models\worker\.
+    pub worker_model_path: String,
+    pub worker_ctx: u32,
+    /// Worker GPU layers. The main model's n_gpu_layers must leave VRAM headroom for
+    /// this — two auto-fits overcommit and Windows silently pages, wrecking both.
+    pub worker_n_gpu_layers: Option<i32>,
     pub temperature: f64,
     /// Max tokens per root-loop model response.
     pub max_tokens: u32,
@@ -64,11 +73,18 @@ impl Default for RlmConfig {
             server_bin: r"runtime\llama.cpp\llama-server.exe".into(),
             host: "127.0.0.1".into(),
             port: 8090,
-            ctx_size: 131072,
-            n_gpu_layers: None,
+            // 32k: the RLM environment carries long material via peek/grep/recursion, so a
+            // huge window is unnecessary and its KV cache would cost GPU layers (speed).
+            ctx_size: 32768,
+            // Capped (not auto-fit) to leave VRAM headroom for the worker model.
+            n_gpu_layers: Some(38),
             kv_cache_type: "q8_0".into(),
             flash_attn: true,
             extra_server_args: Vec::new(),
+            worker_port: Some(8092),
+            worker_model_path: String::new(),
+            worker_ctx: 8192,
+            worker_n_gpu_layers: Some(99),
             temperature: 0.7,
             // Generous caps: reasoning models spend chain-of-thought tokens against the
             // completion budget before the final answer appears.
@@ -107,11 +123,21 @@ impl RlmConfig {
                 cfg.model_path = gguf.to_string_lossy().into_owned();
             }
         }
+        if cfg.worker_port.is_some() && cfg.worker_model_path.is_empty() {
+            match smallest_gguf(&repo_root.join("models").join("worker")) {
+                Some(gguf) => {
+                    eprintln!("[rlm] auto-discovered worker model: {}", gguf.display());
+                    cfg.worker_model_path = gguf.to_string_lossy().into_owned();
+                }
+                None => cfg.worker_port = None, // no worker model present: single-model mode
+            }
+        }
         Ok(cfg)
     }
 
     fn resolve_paths(&mut self, base: &Path) {
-        for field in [&mut self.model_path, &mut self.server_bin, &mut self.memory_path] {
+        for field in [&mut self.model_path, &mut self.server_bin, &mut self.memory_path,
+                      &mut self.worker_model_path] {
             if field.is_empty() {
                 continue;
             }

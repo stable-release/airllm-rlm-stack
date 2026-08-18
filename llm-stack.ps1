@@ -6,8 +6,9 @@
 #   .\llm-stack.ps1 status    processes, health, VRAM
 #
 # Servers:
-#   llama.cpp :8090  smallest GGUF found in models\ (interactive speed)
+#   llama.cpp :8090  smallest GGUF found in models\ (root reasoning model)
 #   AirLLM    :8091  first safetensors checkpoint dir found in models\ (layer streaming, instrumented)
+#   worker    :8092  smallest GGUF found in models\worker\ (fast leaf-task model for rlm sub-calls)
 #
 # Model discovery keeps this script model-agnostic: drop your checkpoints into
 # models\ and the stack picks them up. Server flags (context size, KV cache type,
@@ -33,7 +34,12 @@ $llamaModel = if ($cfg.model_path) { Get-Item (Join-Path $root $cfg.model_path) 
 }
 # First subdirectory of models\ that holds a safetensors checkpoint.
 $airllmModel = Get-ChildItem "$root\models" -Directory -ErrorAction SilentlyContinue |
-    Where-Object { Test-Path "$($_.FullName)\*.safetensors" } | Select-Object -First 1
+    Where-Object { Test-Path "$($_.FullName)\*.safetensors" -and $_.Name -ne 'worker' } | Select-Object -First 1
+# Worker model for rlm leaf sub-calls (optional).
+$workerModel = if ($cfg.worker_model_path) { Get-Item (Join-Path $root $cfg.worker_model_path) -ErrorAction SilentlyContinue } else {
+    Get-ChildItem "$root\models\worker\*.gguf" -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -notmatch '^mmproj' } | Sort-Object Length | Select-Object -First 1
+}
 
 $llamaExe  = "$rt\llama.cpp\llama-server.exe"
 $llamaArgs = "-m `"$($llamaModel.FullName)`" --host $($cfg.host) --port $($cfg.port) -c $($cfg.ctx_size) --jinja"
@@ -44,6 +50,11 @@ if ($cfg.extra_server_args) { $llamaArgs += " " + ($cfg.extra_server_args -join 
 $airllmPy   = "$root\.venv\Scripts\python.exe"
 $airllmPort = 8091
 $airllmArgs = "`"$root\serve_airllm.py`" --model `"$($airllmModel.FullName)`" --port $airllmPort"
+$workerPort = if ($cfg.worker_port) { $cfg.worker_port } else { 8092 }
+$workerArgs = "-m `"$($workerModel.FullName)`" --host $($cfg.host) --port $workerPort -c $($cfg.worker_ctx) --jinja"
+if ($cfg.flash_attn)    { $workerArgs += " -fa on" }
+if ($cfg.kv_cache_type) { $workerArgs += " --cache-type-k $($cfg.kv_cache_type) --cache-type-v $($cfg.kv_cache_type)" }
+if ($null -ne $cfg.worker_n_gpu_layers) { $workerArgs += " -ngl $($cfg.worker_n_gpu_layers)" }
 
 # Startup grace before health-based restarts kick in (model loading takes a while).
 $graceSeconds = 600
@@ -52,7 +63,13 @@ function Log([string]$msg) {
     "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  $msg" | Add-Content -Encoding utf8 $stackLog
 }
 
-function Get-LlamaProc  { Get-Process llama-server -ErrorAction SilentlyContinue }
+# Main and worker are both llama-server.exe — tell them apart by the port on their command line.
+function Get-LlamaProcByPort([int]$port) {
+    Get-CimInstance Win32_Process -Filter "Name = 'llama-server.exe'" |
+        Where-Object { $_.CommandLine -match "--port $port\b" }
+}
+function Get-LlamaProc  { Get-LlamaProcByPort $cfg.port }
+function Get-WorkerProc { Get-LlamaProcByPort $workerPort }
 function Get-AirllmProc {
     Get-CimInstance Win32_Process -Filter "Name = 'python.exe'" |
         Where-Object { $_.CommandLine -match 'serve_airllm\.py' }
@@ -75,17 +92,21 @@ function Start-Server([string]$name, [string]$exe, [string]$argLine, [string]$lo
 
 function Supervise {
     Log "supervisor up (pid $PID)"
-    $started = @{ llama = $null; airllm = $null }   # last (re)start time, for the health grace period
-    $unhealthy = @{ llama = 0; airllm = 0 }
+    $started = @{ llama = $null; airllm = $null; worker = $null }   # last (re)start time, for the health grace period
+    $unhealthy = @{ llama = 0; airllm = 0; worker = 0 }
 
+    $names = @('llama', 'airllm') + $(if ($workerModel) { @('worker') } else { @() })
     while (-not (Test-Path $stopFlag)) {
-        foreach ($name in @('llama', 'airllm')) {
-            $proc = if ($name -eq 'llama') { Get-LlamaProc } else { Get-AirllmProc }
-            $port = if ($name -eq 'llama') { $cfg.port } else { $airllmPort }
+        foreach ($name in $names) {
+            $proc = switch ($name) { 'llama' { Get-LlamaProc } 'airllm' { Get-AirllmProc } 'worker' { Get-WorkerProc } }
+            $port = switch ($name) { 'llama' { $cfg.port } 'airllm' { $airllmPort } 'worker' { $workerPort } }
 
             if (-not $proc) {
-                if ($name -eq 'llama') { Start-Server 'llama.cpp:8090' $llamaExe $llamaArgs "$rt\llama-server.log" }
-                else                   { Start-Server 'airllm:8091'   $airllmPy  $airllmArgs "$rt\serve_airllm.log" }
+                switch ($name) {
+                    'llama'  { Start-Server "llama.cpp:$($cfg.port)" $llamaExe $llamaArgs "$rt\llama-server.log" }
+                    'airllm' { Start-Server "airllm:$airllmPort"     $airllmPy  $airllmArgs "$rt\serve_airllm.log" }
+                    'worker' { Start-Server "worker:$workerPort"     $llamaExe  $workerArgs "$rt\worker.log" }
+                }
                 $started[$name] = Get-Date
                 $unhealthy[$name] = 0
                 continue
@@ -109,7 +130,7 @@ function Supervise {
     }
 
     Log "stop flag seen; shutting servers down"
-    Get-LlamaProc | Stop-Process -Force -ErrorAction SilentlyContinue
+    Get-Process llama-server -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     Get-AirllmProc | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
     Log "supervisor exiting"
 }
@@ -132,10 +153,10 @@ switch ($cmd) {
         while ((Get-SupervisorProc) -and (Get-Date) -lt $deadline) { Start-Sleep 2 }
         # ...then guarantee the result regardless.
         Get-SupervisorProc | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
-        Get-LlamaProc | Stop-Process -Force -ErrorAction SilentlyContinue
+        Get-Process llama-server -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
         Get-AirllmProc | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
         Remove-Item $stopFlag -Force -ErrorAction SilentlyContinue
-        Write-Output "stack stopped (supervisor + both servers)."
+        Write-Output "stack stopped (supervisor + all servers)."
     }
 
     'restart' {
@@ -147,7 +168,9 @@ switch ($cmd) {
         $sup = Get-SupervisorProc
         Write-Output ("supervisor : " + $(if ($sup) { "running (pid $($sup.ProcessId))" } else { "not running" }))
         $l = Get-LlamaProc
-        Write-Output ("llama:$($cfg.port) : " + $(if ($l) { "pid $($l.Id), healthy=$(Test-Health $cfg.port)" } else { "down" }))
+        Write-Output ("llama:$($cfg.port) : " + $(if ($l) { "pid $($l.ProcessId), healthy=$(Test-Health $cfg.port)" } else { "down" }))
+        $w = Get-WorkerProc
+        Write-Output ("worker:$workerPort" + ": " + $(if ($w) { "pid $($w.ProcessId), healthy=$(Test-Health $workerPort)" } elseif ($workerModel) { "down" } else { "no worker model in models\worker\" }))
         $a = Get-AirllmProc
         Write-Output ("airllm:$airllmPort" + ": " + $(if ($a) { "pid $($a.ProcessId), healthy=$(Test-Health $airllmPort)" } else { "down" }))
         Write-Output ("VRAM       : " + (nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader))

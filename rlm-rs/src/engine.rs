@@ -34,8 +34,12 @@ fn context_slice(contexts: &[(String, String)], name: &str, start: i64, len: i64
     Ok(content.chars().skip(start).take(len).collect())
 }
 
+/// `client` drives the root loop's reasoning (the big model); `sub_client` serves leaf
+/// sub-calls (`llm` / single-shot `llm_on`) — point it at a small fast worker model, or
+/// pass the same client for single-model operation.
 pub fn run_rlm(
     client: &LlmClient,
+    sub_client: &LlmClient,
     cfg: &RlmConfig,
     contexts: Vec<(String, String)>,
     query: &str,
@@ -48,7 +52,8 @@ pub fn run_rlm(
         final_answer: None,
     }));
 
-    let engine = build_engine(client.clone(), cfg.clone(), depth, state.clone(), memory.clone());
+    let engine = build_engine(client.clone(), sub_client.clone(), cfg.clone(), depth,
+                              state.clone(), memory.clone());
     let system = system_prompt(cfg, &state.borrow(), &memory.borrow(), depth);
 
     let mut messages = vec![
@@ -106,6 +111,7 @@ pub fn run_rlm(
 
 fn build_engine(
     client: LlmClient,
+    sub_client: LlmClient,
     cfg: RlmConfig,
     depth: u32,
     state: Rc<RefCell<EvalState>>,
@@ -208,7 +214,7 @@ fn build_engine(
 
     // ---- recursive sub-calls --------------------------------------------
     {
-        let cl = client.clone();
+        let cl = sub_client.clone();
         let cf = cfg.clone();
         engine.register_fn("llm", move |prompt: ImmutableString| -> String {
             let messages = [
@@ -223,6 +229,7 @@ fn build_engine(
     }
     {
         let cl = client.clone();
+        let sub = sub_client.clone();
         let cf = cfg.clone();
         let st = state.clone();
         let mem = memory.clone();
@@ -236,11 +243,11 @@ fn build_engine(
                 if slice.is_empty() {
                     return "[error] empty slice".to_string();
                 }
-                // Large slices get a nested RLM loop of their own (true recursion);
-                // small ones are answered with a single grounded sub-call.
+                // Large slices get a nested RLM loop of their own (true recursion, on the
+                // main model); small ones are answered by the fast worker in one shot.
                 if depth + 1 < cf.max_depth && slice.chars().count() > cf.recurse_threshold {
                     let sub_ctx = vec![("excerpt".to_string(), slice)];
-                    match run_rlm(&cl, &cf, sub_ctx, &prompt, depth + 1, mem.clone()) {
+                    match run_rlm(&cl, &sub, &cf, sub_ctx, &prompt, depth + 1, mem.clone()) {
                         Ok(s) => s,
                         Err(e) => format!("[error] recursive call failed: {e}"),
                     }
@@ -257,7 +264,7 @@ fn build_engine(
                         ),
                         ChatMessage::new("user", prompt.to_string()),
                     ];
-                    match cl.chat(&messages, cf.sub_max_tokens) {
+                    match sub.chat(&messages, cf.sub_max_tokens) {
                         Ok(s) => s,
                         Err(e) => format!("[error] sub-call failed: {e}"),
                     }

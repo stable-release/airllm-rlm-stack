@@ -9,6 +9,7 @@ root; models and runtime binaries are never committed (see `.gitignore`).
 | Path | What |
 |------|------|
 | `models\*.gguf` | your GGUF quants (llama.cpp path) — smallest one is picked by default |
+| `models\worker\*.gguf` | optional small fast model for RLM leaf sub-calls (port 8092) |
 | `models\<dir>\*.safetensors` | your safetensors checkpoints (AirLLM streaming path) |
 | `runtime\llama.cpp\` | llama.cpp Windows CUDA build (`llama-server.exe` etc.) |
 | `air_llm\airllm\airllm_gguf.py` | AirLLM GGUF backend (`AutoModel.from_pretrained` on any `.gguf` path routes here) |
@@ -23,8 +24,24 @@ root; models and runtime binaries are never committed (see `.gitignore`).
 .\llm-stack.ps1 stop      # kill switch
 ```
 
-llama.cpp serves on port 8090, the AirLLM streaming server on 8091. Both are
-OpenAI-compatible under `/v1`.
+llama.cpp serves on port 8090, the AirLLM streaming server on 8091, and the
+optional worker on 8092. All are OpenAI-compatible under `/v1`.
+
+## Two-tier inference (worker model)
+
+Drop a small quant (e.g. a ~4B) into `models\worker\` and the RLM harness routes
+leaf sub-calls (`llm`, single-shot `llm_on`) to it while root reasoning stays on
+the big model. Measured on the 16 GB card: worker ~98 tok/s alongside the main
+model at ~4.7 tok/s — a ~20x speedup for the calls that carry most of the token
+volume, at ~24% cost to root speed.
+
+**VRAM must be budgeted explicitly** (`n_gpu_layers` for the main model,
+`worker_n_gpu_layers` for the worker): two auto-fits overcommit the GPU and
+Windows silently pages VRAM, collapsing both models to ~1 tok/s. The shipped
+defaults (38 main layers + full-GPU ~2-3 GB worker) fit a 16 GB card with a
+27B-class main model. Note: speculative decoding via the model's own MTP head
+was tested and is a net loss on weight-edited models (draft acceptance ~44%);
+the two-tier split is the better use of the VRAM.
 
 ## Why GGUF goes through llama.cpp and not AirLLM's layer streamer
 

@@ -128,9 +128,30 @@ fn main() -> Result<()> {
 
     let client = LlmClient::new(&cfg);
 
+    // Leaf sub-calls go to the fast worker model when one is configured and reachable;
+    // otherwise everything runs on the main model.
+    let make_sub_client = |cfg: &config::RlmConfig, auto_start: bool| -> LlmClient {
+        if let Some(port) = cfg.worker_port {
+            let worker = LlmClient::for_port(cfg, port);
+            let up = if auto_start {
+                server::ensure_worker(cfg, &worker).map(|_| true).unwrap_or_else(|e| {
+                    eprintln!("[rlm] worker unavailable ({e}); sub-calls use the main model");
+                    false
+                })
+            } else {
+                worker.healthy()
+            };
+            if up {
+                return worker;
+            }
+        }
+        LlmClient::new(cfg)
+    };
+
     match cli.command.as_str() {
         "serve" => {
             server::ensure_server(&cfg, &client)?;
+            server::ensure_worker(&cfg, &LlmClient::for_port(&cfg, cfg.worker_port.unwrap_or(cfg.port)))?;
             println!("llama-server running at {} (OpenAI-compatible: {}/v1)", cfg.base_url(), cfg.base_url());
             Ok(())
         }
@@ -143,9 +164,10 @@ fn main() -> Result<()> {
             } else if !client.healthy() {
                 bail!("no llama-server reachable at {} and --no-server was given", cfg.base_url());
             }
+            let sub_client = make_sub_client(&cfg, !cli.no_server);
             let contexts = load_contexts(&cli.context_files)?;
             let memory = Rc::new(RefCell::new(Memory::load(&cfg.memory_path)));
-            let answer = engine::run_rlm(&client, &cfg, contexts, &query, 0, memory.clone())?;
+            let answer = engine::run_rlm(&client, &sub_client, &cfg, contexts, &query, 0, memory.clone())?;
             memory.borrow_mut().record_session(&query, &answer);
             println!("{answer}");
             Ok(())
@@ -154,6 +176,7 @@ fn main() -> Result<()> {
             if !cli.no_server {
                 server::ensure_server(&cfg, &client)?;
             }
+            let sub_client = make_sub_client(&cfg, !cli.no_server);
             let base_contexts = load_contexts(&cli.context_files)?;
             let memory = Rc::new(RefCell::new(Memory::load(&cfg.memory_path)));
             let mut conversation = String::new();
@@ -177,7 +200,7 @@ fn main() -> Result<()> {
                 if !conversation.is_empty() {
                     contexts.push(("conversation_history".to_string(), conversation.clone()));
                 }
-                match engine::run_rlm(&client, &cfg, contexts, &query, 0, memory.clone()) {
+                match engine::run_rlm(&client, &sub_client, &cfg, contexts, &query, 0, memory.clone()) {
                     Ok(answer) => {
                         println!("rlm> {answer}\n");
                         conversation.push_str(&format!("USER: {query}\nASSISTANT: {answer}\n\n"));

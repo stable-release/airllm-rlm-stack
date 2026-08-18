@@ -40,9 +40,14 @@ the whole harness a single ~3 MB native binary with no Python runtime.
 
 Configuration lives in `rlm.config.json` (created from defaults on first run; see
 [rlm.config.example.json](rlm.config.example.json)). An empty `model_path`
-auto-discovers the smallest GGUF under `models\`. Relative paths resolve against
-the repo root, so the checkout is location-independent. `n_gpu_layers: null` lets
-llama.cpp auto-fit layers to available VRAM.
+auto-discovers the smallest GGUF under `models\`; an empty `worker_model_path`
+auto-discovers `models\worker\` (no worker model = single-model mode). Relative
+paths resolve against the repo root, so the checkout is location-independent.
+
+**Two-tier inference:** leaf sub-calls (`llm`, single-shot `llm_on`) run on the
+fast worker model; the root loop and nested recursive loops stay on the main
+model. Budget VRAM explicitly via `n_gpu_layers` / `worker_n_gpu_layers` — two
+auto-fits overcommit the GPU and paging wrecks both models.
 
 ## How a run works
 
