@@ -56,6 +56,15 @@ pub struct RlmConfig {
     /// Wall-clock budget per RLM loop, enforced between iterations (a dispatched
     /// generation is drained, not interrupted). 0 disables the cap.
     pub max_run_seconds: u64,
+    /// Control-plane (daemon) port; always binds 127.0.0.1.
+    pub daemon_port: u16,
+    /// Whether daemon runs may be granted the persistent-memory capability at all
+    /// (requests still have to ask for it; default-deny on both sides).
+    pub daemon_allow_memory: bool,
+    /// Max total inline context chars accepted per daemon run.
+    pub daemon_max_context_chars: usize,
+    /// JSONL file for bounded terminal run snapshots (empty disables persistence).
+    pub daemon_runs_path: String,
     pub temperature: f64,
     /// Max tokens per root-loop model response.
     pub max_tokens: u32,
@@ -98,6 +107,10 @@ impl Default for RlmConfig {
             worker_thinking: false,
             root_thinking: false,
             max_run_seconds: 900,
+            daemon_port: 8093,
+            daemon_allow_memory: false,
+            daemon_max_context_chars: 5_000_000,
+            daemon_runs_path: r"rlm-rs\runs.jsonl".into(),
             temperature: 0.7,
             // Generous caps: reasoning models spend chain-of-thought tokens against the
             // completion budget before the final answer appears.
@@ -150,7 +163,7 @@ impl RlmConfig {
 
     fn resolve_paths(&mut self, base: &Path) {
         for field in [&mut self.model_path, &mut self.server_bin, &mut self.memory_path,
-                      &mut self.worker_model_path] {
+                      &mut self.worker_model_path, &mut self.daemon_runs_path] {
             if field.is_empty() {
                 continue;
             }

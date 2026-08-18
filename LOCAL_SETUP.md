@@ -27,6 +27,11 @@ root; models and runtime binaries are never committed (see `.gitignore`).
 llama.cpp serves on port 8090, the AirLLM streaming server on 8091, and the
 optional worker on 8092. All are OpenAI-compatible under `/v1`.
 
+There is also a loopback-only **control plane** (`rlm-rs\target\release\rlm.exe
+daemon`, port 8093): a run API with bearer auth, default-deny capabilities,
+inline-context-only ingestion, SSE progress events, cooperative cancellation,
+and a single-generation permit — see [rlm-rs/README.md](rlm-rs/README.md).
+
 ## Two-tier inference (worker model)
 
 Drop a small quant (e.g. a ~4B) into `models\worker\` and the RLM harness routes

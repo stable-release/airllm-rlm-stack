@@ -17,3 +17,4 @@ rlm-rs/target/
 rlm-rs/rlm_memory.json
 # Local config names the actual model files — keep it out of the repo (see rlm.config.example.json)
 rlm-rs/rlm.config.json
+rlm-rs/runs.jsonl

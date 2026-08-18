@@ -6,11 +6,42 @@
 use crate::client::{truncate, ChatMessage, LlmClient};
 use crate::config::RlmConfig;
 use crate::memory::Memory;
-use anyhow::Result;
+use anyhow::{bail, Result};
 use regex::Regex;
 use rhai::{Dynamic, Engine, ImmutableString};
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::Sender;
+use std::sync::Arc;
+
+/// External control over a running RLM loop: cooperative cancellation (honored at the
+/// safe boundary between iterations), progress events, and capability gating.
+#[derive(Clone)]
+pub struct RunControl {
+    pub cancel: Arc<AtomicBool>,
+    pub events: Option<Sender<RunEvent>>,
+    /// Persistent-memory capability (remember/recall/memory_keys). Default-deny for
+    /// daemon runs; the local CLI grants it.
+    pub allow_memory: bool,
+}
+
+impl Default for RunControl {
+    fn default() -> Self {
+        RunControl {
+            cancel: Arc::new(AtomicBool::new(false)),
+            events: None,
+            allow_memory: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum RunEvent {
+    Iteration { n: u32, of: u32, repl_preview: String },
+}
+
+pub const CANCELLED_MSG: &str = "run cancelled";
 
 const PEEK_CAP: usize = 16_000;
 const GREP_MAX_MATCHES: usize = 80;
@@ -45,6 +76,7 @@ pub fn run_rlm(
     query: &str,
     depth: u32,
     memory: Rc<RefCell<Memory>>,
+    control: &RunControl,
 ) -> Result<String> {
     let state = Rc::new(RefCell::new(EvalState {
         contexts,
@@ -52,8 +84,10 @@ pub fn run_rlm(
         final_answer: None,
     }));
 
+    // Nested loops inherit cancellation and capabilities but do not emit events.
+    let nested_control = RunControl { events: None, ..control.clone() };
     let engine = build_engine(client.clone(), sub_client.clone(), cfg.clone(), depth,
-                              state.clone(), memory.clone());
+                              state.clone(), memory.clone(), nested_control);
     let system = system_prompt(cfg, &state.borrow(), &memory.borrow(), depth);
 
     let mut messages = vec![
@@ -65,8 +99,11 @@ pub fn run_rlm(
     let run_started = std::time::Instant::now();
 
     for iter in 0..cfg.max_iterations {
-        // Wall-clock cap, checked at the safe boundary between iterations (an
-        // already-dispatched generation is drained, never interrupted mid-flight).
+        // Cancellation and wall-clock cap, checked at the safe boundary between
+        // iterations (an already-dispatched generation is drained, never interrupted).
+        if control.cancel.load(Ordering::Relaxed) {
+            bail!(CANCELLED_MSG);
+        }
         if cfg.max_run_seconds > 0 && run_started.elapsed().as_secs() > cfg.max_run_seconds {
             eprintln!("[rlm] wall-clock budget ({}s) reached; requesting final answer", cfg.max_run_seconds);
             break;
@@ -101,6 +138,13 @@ pub fn run_rlm(
         }
         if depth == 0 {
             eprintln!("[rlm] iteration {}/{} — REPL output {} chars", iter + 1, cfg.max_iterations, repl_out.len());
+            if let Some(events) = &control.events {
+                let _ = events.send(RunEvent::Iteration {
+                    n: iter + 1,
+                    of: cfg.max_iterations,
+                    repl_preview: truncate(&repl_out, 500),
+                });
+            }
         }
         messages.push(ChatMessage::new(
             "user",
@@ -123,6 +167,7 @@ fn build_engine(
     depth: u32,
     state: Rc<RefCell<EvalState>>,
     memory: Rc<RefCell<Memory>>,
+    control: RunControl,
 ) -> Engine {
     let mut engine = Engine::new();
     engine.set_max_operations(2_000_000);
@@ -240,6 +285,7 @@ fn build_engine(
         let cf = cfg.clone();
         let st = state.clone();
         let mem = memory.clone();
+        let ctl = control.clone();
         engine.register_fn(
             "llm_on",
             move |prompt: ImmutableString, name: ImmutableString, start: i64, len: i64| -> String {
@@ -254,7 +300,7 @@ fn build_engine(
                 // main model); small ones are answered by the fast worker in one shot.
                 if depth + 1 < cf.max_depth && slice.chars().count() > cf.recurse_threshold {
                     let sub_ctx = vec![("excerpt".to_string(), slice)];
-                    match run_rlm(&cl, &sub, &cf, sub_ctx, &prompt, depth + 1, mem.clone()) {
+                    match run_rlm(&cl, &sub, &cf, sub_ctx, &prompt, depth + 1, mem.clone(), &ctl) {
                         Ok(s) => s,
                         Err(e) => format!("[error] recursive call failed: {e}"),
                     }
@@ -280,31 +326,45 @@ fn build_engine(
         );
     }
 
-    // ---- persistent memory ----------------------------------------------
-    {
-        let mem = memory.clone();
-        engine.register_fn("remember", move |key: ImmutableString, value: ImmutableString| {
-            mem.borrow_mut().remember(&key, &value);
+    // ---- persistent memory (capability-gated) ----------------------------
+    if control.allow_memory {
+        {
+            let mem = memory.clone();
+            engine.register_fn("remember", move |key: ImmutableString, value: ImmutableString| {
+                mem.borrow_mut().remember(&key, &value);
+            });
+        }
+        {
+            let mem = memory.clone();
+            engine.register_fn("recall", move |key: ImmutableString| -> String {
+                mem.borrow()
+                    .recall(&key)
+                    .cloned()
+                    .unwrap_or_else(|| format!("[error] no memory for key '{key}'"))
+            });
+        }
+        {
+            let mem = memory;
+            engine.register_fn("memory_keys", move || -> String {
+                let mem = mem.borrow();
+                if mem.facts.is_empty() {
+                    "(memory is empty)".to_string()
+                } else {
+                    mem.facts.keys().cloned().collect::<Vec<_>>().join("\n")
+                }
+            });
+        }
+    } else {
+        // Registered but inert, so scripts fail soft with a clear message instead of a
+        // Rhai unknown-function error.
+        engine.register_fn("remember", |_: ImmutableString, _: ImmutableString| -> String {
+            "[error] memory capability not granted for this run".to_string()
         });
-    }
-    {
-        let mem = memory.clone();
-        engine.register_fn("recall", move |key: ImmutableString| -> String {
-            mem.borrow()
-                .recall(&key)
-                .cloned()
-                .unwrap_or_else(|| format!("[error] no memory for key '{key}'"))
+        engine.register_fn("recall", |_: ImmutableString| -> String {
+            "[error] memory capability not granted for this run".to_string()
         });
-    }
-    {
-        let mem = memory;
-        engine.register_fn("memory_keys", move || -> String {
-            let mem = mem.borrow();
-            if mem.facts.is_empty() {
-                "(memory is empty)".to_string()
-            } else {
-                mem.facts.keys().cloned().collect::<Vec<_>>().join("\n")
-            }
+        engine.register_fn("memory_keys", || -> String {
+            "[error] memory capability not granted for this run".to_string()
         });
     }
 

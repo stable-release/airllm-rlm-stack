@@ -1,5 +1,6 @@
 mod client;
 mod config;
+mod daemon;
 mod engine;
 mod memory;
 mod server;
@@ -19,6 +20,8 @@ USAGE:
   rlm run  -q "<question>" [-c <file>]...   answer a question, optionally over long context files
   rlm chat [-c <file>]...                   interactive chat with recursive context management
   rlm serve                                 just start the model server and exit
+  rlm daemon                                loopback-only control plane (runs API + SSE events);
+                                            set RLM_API_TOKEN to require bearer auth
 
 OPTIONS:
   -q, --query <text>      the question (run mode)
@@ -61,6 +64,7 @@ fn parse_cli() -> Result<Cli> {
             cli.command = args.next().unwrap();
         }
     }
+    // `daemon` reuses --port for its own listen port rather than the model server's.
     while let Some(arg) = args.next() {
         let mut need = |name: &str| -> Result<String> {
             match args.next() {
@@ -117,7 +121,11 @@ fn main() -> Result<()> {
         cfg.model_path = m.clone();
     }
     if let Some(p) = cli.port {
-        cfg.port = p;
+        if cli.command == "daemon" {
+            cfg.daemon_port = p;
+        } else {
+            cfg.port = p;
+        }
     }
     if let Some(i) = cli.iters {
         cfg.max_iterations = i;
@@ -153,6 +161,10 @@ fn main() -> Result<()> {
     };
 
     match cli.command.as_str() {
+        "daemon" => {
+            let port = cfg.daemon_port;
+            daemon::serve(cfg, port)
+        }
         "serve" => {
             server::ensure_server(&cfg, &client)?;
             server::ensure_worker(&cfg, &LlmClient::for_port(&cfg, cfg.worker_port.unwrap_or(cfg.port)))?;
@@ -171,7 +183,8 @@ fn main() -> Result<()> {
             let sub_client = make_sub_client(&cfg, !cli.no_server);
             let contexts = load_contexts(&cli.context_files)?;
             let memory = Rc::new(RefCell::new(Memory::load(&cfg.memory_path)));
-            let answer = engine::run_rlm(&client, &sub_client, &cfg, contexts, &query, 0, memory.clone())?;
+            let answer = engine::run_rlm(&client, &sub_client, &cfg, contexts, &query, 0,
+                                         memory.clone(), &engine::RunControl::default())?;
             memory.borrow_mut().record_session(&query, &answer);
             println!("{answer}");
             Ok(())
@@ -204,7 +217,8 @@ fn main() -> Result<()> {
                 if !conversation.is_empty() {
                     contexts.push(("conversation_history".to_string(), conversation.clone()));
                 }
-                match engine::run_rlm(&client, &sub_client, &cfg, contexts, &query, 0, memory.clone()) {
+                match engine::run_rlm(&client, &sub_client, &cfg, contexts, &query, 0,
+                                      memory.clone(), &engine::RunControl::default()) {
                     Ok(answer) => {
                         println!("rlm> {answer}\n");
                         conversation.push_str(&format!("USER: {query}\nASSISTANT: {answer}\n\n"));

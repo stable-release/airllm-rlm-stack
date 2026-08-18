@@ -63,6 +63,43 @@ auto-fits overcommit the GPU and paging wrecks both models.
 5. Facts saved with `remember()` and a rolling session log persist in
    `rlm_memory.json` and are surfaced to future sessions.
 
+## Control plane (`rlm daemon`)
+
+A loopback-only run service ported from the fork's `rlmd` design (see
+`agent/offline-rlm-control-plane`), keeping its security posture:
+
+- **Binds 127.0.0.1 only** — remote access is your tunnel's job (SSH, Tailscale
+  Serve, or a TLS reverse proxy); the daemon refuses to listen on LAN interfaces.
+- **Bearer auth**: set `RLM_API_TOKEN` and every `/v1/*` request must send
+  `Authorization: Bearer <token>`. `/health` stays open but exposes no run data.
+- **Capabilities default-deny** and are intersected with server config (v0
+  capability: `memory` — persistent remember/recall; `daemon_allow_memory`
+  must also be true server-side).
+- **No local file access for clients**: contexts are supplied inline in the
+  request body (bounded by `daemon_max_context_chars`); the daemon never opens
+  local paths on a client's behalf. The model's script environment remains
+  sandboxed Rhai with no filesystem, network, or exec functions registered.
+- **Limits only ratchet down**: per-run `max_iterations` / `max_tokens` /
+  `max_run_seconds` are clamped to the configured ceilings.
+- **One run at a time** (single generation permit, bounded queue, 429 on
+  over-admission); cancellation is cooperative at iteration boundaries — a
+  dispatched generation is drained, never interrupted.
+- **Bounded store**: terminal snapshots append to `runs.jsonl` (gitignored) as
+  previews; events are capped per run.
+
+```bash
+RLM_API_TOKEN=secret ./target/release/rlm.exe daemon        # port 8093
+
+curl -X POST http://127.0.0.1:8093/v1/runs \
+  -H "Authorization: Bearer secret" -H "Content-Type: application/json" \
+  -d '{"prompt":"...","contexts":[{"name":"doc","text":"..."}],
+       "capabilities":{"memory":false},"limits":{"max_iterations":6}}'
+# -> {"run_id":"run-...","status":"queued",...}
+
+curl -N http://127.0.0.1:8093/v1/runs/<id>/events -H "Authorization: Bearer secret"   # SSE (replay with ?after=<seq>)
+curl -X POST http://127.0.0.1:8093/v1/runs/<id>/cancel -H "Authorization: Bearer secret"
+```
+
 ## Build
 
 ```powershell
