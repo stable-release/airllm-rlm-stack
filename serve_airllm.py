@@ -212,7 +212,7 @@ def main():
                     help="safetensors checkpoint dir; default: first one found under models\\")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8091)
-    ap.add_argument("--ctx", type=int, default=8192)
+    ap.add_argument("--ctx", type=int, default=131072)
     ap.add_argument("--delete-original", action="store_true",
                     help="delete the unsplit checkpoint after splitting to save ~56GB disk")
     args = ap.parse_args()

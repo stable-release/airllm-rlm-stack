@@ -31,6 +31,12 @@ pub struct RlmConfig {
     pub ctx_size: u32,
     /// GPU layers; null lets llama.cpp auto-fit to available VRAM.
     pub n_gpu_layers: Option<i32>,
+    /// KV cache quantization for llama-server (empty = server default, f16).
+    pub kv_cache_type: String,
+    /// Flash attention (-fa on).
+    pub flash_attn: bool,
+    /// Extra raw llama-server arguments appended verbatim.
+    pub extra_server_args: Vec<String>,
     pub temperature: f64,
     /// Max tokens per root-loop model response.
     pub max_tokens: u32,
@@ -58,8 +64,11 @@ impl Default for RlmConfig {
             server_bin: r"runtime\llama.cpp\llama-server.exe".into(),
             host: "127.0.0.1".into(),
             port: 8090,
-            ctx_size: 32768,
+            ctx_size: 131072,
             n_gpu_layers: None,
+            kv_cache_type: "q8_0".into(),
+            flash_attn: true,
+            extra_server_args: Vec::new(),
             temperature: 0.7,
             // Generous caps: reasoning models spend chain-of-thought tokens against the
             // completion budget before the final answer appears.

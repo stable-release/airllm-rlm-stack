@@ -55,7 +55,7 @@ class AirLLMGGUF:
         self.server_bin = kwargs.get("server_bin") or _default_server_bin()
         self.host = kwargs.get("host", "127.0.0.1")
         self.port = int(kwargs.get("port", 8090))
-        self.ctx_len = int(kwargs.get("ctx_len", 32768))
+        self.ctx_len = int(kwargs.get("ctx_len", 131072))
         # None -> let llama.cpp auto-fit layers to available VRAM
         self.n_gpu_layers = kwargs.get("n_gpu_layers", None)
         self.kv_cache_type = kwargs.get("kv_cache_type", "q8_0")

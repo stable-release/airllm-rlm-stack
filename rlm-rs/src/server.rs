@@ -24,13 +24,18 @@ pub fn ensure_server(cfg: &RlmConfig, client: &LlmClient) -> Result<bool> {
         .args(["--port", &cfg.port.to_string()])
         .args(["-c", &cfg.ctx_size.to_string()])
         .args(["--jinja"])
-        .args(["-fa", "on"])
-        .args(["--cache-type-k", "q8_0", "--cache-type-v", "q8_0"])
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    if cfg.flash_attn {
+        cmd.args(["-fa", "on"]);
+    }
+    if !cfg.kv_cache_type.is_empty() {
+        cmd.args(["--cache-type-k", &cfg.kv_cache_type, "--cache-type-v", &cfg.kv_cache_type]);
+    }
     if let Some(ngl) = cfg.n_gpu_layers {
         cmd.args(["-ngl", &ngl.to_string()]);
     }
+    cmd.args(&cfg.extra_server_args);
     let child = cmd.spawn()?;
     eprintln!(
         "[rlm] started llama-server (pid {}) with {} — waiting for model load...",

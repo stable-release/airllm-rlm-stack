@@ -10,8 +10,9 @@
 #   AirLLM    :8091  first safetensors checkpoint dir found in models\ (layer streaming, instrumented)
 #
 # Model discovery keeps this script model-agnostic: drop your checkpoints into
-# models\ and the stack picks them up. Pin specific files by editing the two
-# discovery lines below.
+# models\ and the stack picks them up. Server flags (context size, KV cache type,
+# flash attention, extra args) come from rlm-rs\rlm.config.json — the single
+# source of truth shared with the Rust harness.
 
 param([Parameter(Position = 0)][ValidateSet('start', 'stop', 'restart', 'status', 'supervise')][string]$cmd = 'status')
 
@@ -20,17 +21,29 @@ $rt       = "$root\runtime"
 $stopFlag = "$rt\stack.stop"
 $stackLog = "$rt\stack.log"
 
-# Smallest non-projector GGUF directly under models\ (quants sort below full precision).
-$llamaModel = Get-ChildItem "$root\models\*.gguf" -ErrorAction SilentlyContinue |
-    Where-Object { $_.Name -notmatch '^mmproj' } | Sort-Object Length | Select-Object -First 1
+# Shared server configuration (falls back to the committed example).
+$cfgPath = if (Test-Path "$root\rlm-rs\rlm.config.json") { "$root\rlm-rs\rlm.config.json" } else { "$root\rlm-rs\rlm.config.example.json" }
+$cfg = Get-Content $cfgPath -Raw | ConvertFrom-Json
+
+# Smallest non-projector GGUF directly under models\ (quants sort below full precision),
+# unless the config pins one.
+$llamaModel = if ($cfg.model_path) { Get-Item (Join-Path $root $cfg.model_path) -ErrorAction SilentlyContinue } else {
+    Get-ChildItem "$root\models\*.gguf" -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -notmatch '^mmproj' } | Sort-Object Length | Select-Object -First 1
+}
 # First subdirectory of models\ that holds a safetensors checkpoint.
 $airllmModel = Get-ChildItem "$root\models" -Directory -ErrorAction SilentlyContinue |
     Where-Object { Test-Path "$($_.FullName)\*.safetensors" } | Select-Object -First 1
 
-$llamaExe   = "$rt\llama.cpp\llama-server.exe"
-$llamaArgs  = "-m `"$($llamaModel.FullName)`" --host 127.0.0.1 --port 8090 -c 32768 --jinja -fa on --cache-type-k q8_0 --cache-type-v q8_0"
+$llamaExe  = "$rt\llama.cpp\llama-server.exe"
+$llamaArgs = "-m `"$($llamaModel.FullName)`" --host $($cfg.host) --port $($cfg.port) -c $($cfg.ctx_size) --jinja"
+if ($cfg.flash_attn)    { $llamaArgs += " -fa on" }
+if ($cfg.kv_cache_type) { $llamaArgs += " --cache-type-k $($cfg.kv_cache_type) --cache-type-v $($cfg.kv_cache_type)" }
+if ($null -ne $cfg.n_gpu_layers) { $llamaArgs += " -ngl $($cfg.n_gpu_layers)" }
+if ($cfg.extra_server_args) { $llamaArgs += " " + ($cfg.extra_server_args -join ' ') }
 $airllmPy   = "$root\.venv\Scripts\python.exe"
-$airllmArgs = "`"$root\serve_airllm.py`" --model `"$($airllmModel.FullName)`" --port 8091"
+$airllmPort = 8091
+$airllmArgs = "`"$root\serve_airllm.py`" --model `"$($airllmModel.FullName)`" --port $airllmPort"
 
 # Startup grace before health-based restarts kick in (model loading takes a while).
 $graceSeconds = 600
@@ -68,7 +81,7 @@ function Supervise {
     while (-not (Test-Path $stopFlag)) {
         foreach ($name in @('llama', 'airllm')) {
             $proc = if ($name -eq 'llama') { Get-LlamaProc } else { Get-AirllmProc }
-            $port = if ($name -eq 'llama') { 8090 } else { 8091 }
+            $port = if ($name -eq 'llama') { $cfg.port } else { $airllmPort }
 
             if (-not $proc) {
                 if ($name -eq 'llama') { Start-Server 'llama.cpp:8090' $llamaExe $llamaArgs "$rt\llama-server.log" }
@@ -134,9 +147,9 @@ switch ($cmd) {
         $sup = Get-SupervisorProc
         Write-Output ("supervisor : " + $(if ($sup) { "running (pid $($sup.ProcessId))" } else { "not running" }))
         $l = Get-LlamaProc
-        Write-Output ("llama:8090 : " + $(if ($l) { "pid $($l.Id), healthy=$(Test-Health 8090)" } else { "down" }))
+        Write-Output ("llama:$($cfg.port) : " + $(if ($l) { "pid $($l.Id), healthy=$(Test-Health $cfg.port)" } else { "down" }))
         $a = Get-AirllmProc
-        Write-Output ("airllm:8091: " + $(if ($a) { "pid $($a.ProcessId), healthy=$(Test-Health 8091)" } else { "down" }))
+        Write-Output ("airllm:$airllmPort" + ": " + $(if ($a) { "pid $($a.ProcessId), healthy=$(Test-Health $airllmPort)" } else { "down" }))
         Write-Output ("VRAM       : " + (nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader))
     }
 }
