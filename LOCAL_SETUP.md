@@ -39,9 +39,15 @@ volume, at ~24% cost to root speed.
 `worker_n_gpu_layers` for the worker): two auto-fits overcommit the GPU and
 Windows silently pages VRAM, collapsing both models to ~1 tok/s. The shipped
 defaults (38 main layers + full-GPU ~2-3 GB worker) fit a 16 GB card with a
-27B-class main model. Note: speculative decoding via the model's own MTP head
-was tested and is a net loss on weight-edited models (draft acceptance ~44%);
-the two-tier split is the better use of the VRAM.
+27B-class main model.
+
+**MTP speculative decoding works — but only with 1-token drafts.** On weight-edited
+models the MTP head is uncertain rather than broken: 3-token linear drafts accept
+only ~44% and lose net speed, while `--spec-draft-n-max 1` keeps the high-confidence
+first position (~73% acceptance) for a measured **+17-27%** decode speedup. The
+shipped config enables this via `extra_server_args`. (Credit: the fork's
+`agent/qwen38-mlx` branch diagnosed rejection ranks and showed the misses are
+recoverable near-misses; its MLX tree-speculation work generalizes this further.)
 
 ## Why GGUF goes through llama.cpp and not AirLLM's layer streamer
 
