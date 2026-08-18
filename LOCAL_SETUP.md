@@ -41,6 +41,13 @@ Windows silently pages VRAM, collapsing both models to ~1 tok/s. The shipped
 defaults (38 main layers + full-GPU ~2-3 GB worker) fit a 16 GB card with a
 27B-class main model.
 
+**Thinking is off by default on both tiers** (`root_thinking` / `worker_thinking`).
+For reasoning models the RLM's iterative script/REPL cycle is itself the reasoning
+scaffold; chain-of-thought on top of it costs minutes per iteration at big-model
+speeds (one measured leaf call: 512 reasoning tokens vs 35 for the plain answer).
+An end-to-end RLM document query dropped from 197s to 110s with thinking off and
+all optimizations active.
+
 **MTP speculative decoding works — but only with 1-token drafts.** On weight-edited
 models the MTP head is uncertain rather than broken: 3-token linear drafts accept
 only ~44% and lose net speed, while `--spec-draft-n-max 1` keeps the high-confidence

@@ -46,6 +46,16 @@ pub struct RlmConfig {
     /// Worker GPU layers. The main model's n_gpu_layers must leave VRAM headroom for
     /// this — two auto-fits overcommit and Windows silently pages, wrecking both.
     pub worker_n_gpu_layers: Option<i32>,
+    /// Chain-of-thought on worker sub-calls. Off by default: leaf tasks don't need it
+    /// and reasoning burn otherwise dwarfs the answer (measured 512 vs 35 tokens).
+    pub worker_thinking: bool,
+    /// Chain-of-thought on the root loop. The iterative script/REPL cycle is itself a
+    /// reasoning scaffold, and at big-model decode speeds a single long chain can cost
+    /// many minutes per iteration.
+    pub root_thinking: bool,
+    /// Wall-clock budget per RLM loop, enforced between iterations (a dispatched
+    /// generation is drained, not interrupted). 0 disables the cap.
+    pub max_run_seconds: u64,
     pub temperature: f64,
     /// Max tokens per root-loop model response.
     pub max_tokens: u32,
@@ -85,6 +95,9 @@ impl Default for RlmConfig {
             worker_model_path: String::new(),
             worker_ctx: 8192,
             worker_n_gpu_layers: Some(99),
+            worker_thinking: false,
+            root_thinking: false,
+            max_run_seconds: 900,
             temperature: 0.7,
             // Generous caps: reasoning models spend chain-of-thought tokens against the
             // completion budget before the final answer appears.

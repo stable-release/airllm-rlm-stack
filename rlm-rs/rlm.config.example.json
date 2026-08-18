@@ -24,5 +24,8 @@
   "max_depth": 2,
   "recurse_threshold": 30000,
   "memory_path": "rlm-rs\\rlm_memory.json",
-  "startup_timeout_secs": 1800
+  "startup_timeout_secs": 1800,
+  "worker_thinking": false,
+  "max_run_seconds": 900,
+  "root_thinking": false
 }

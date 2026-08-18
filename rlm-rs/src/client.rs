@@ -8,6 +8,9 @@ pub struct LlmClient {
     agent: ureq::Agent,
     base_url: String,
     pub temperature: f64,
+    /// When false, requests ask the chat template to skip chain-of-thought — right for
+    /// leaf sub-calls where reasoning burn dwarfs the answer (measured 512 vs 35 tokens).
+    pub thinking: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -38,7 +41,13 @@ impl LlmClient {
             agent,
             base_url: format!("http://{}:{}", cfg.host, port),
             temperature: cfg.temperature,
+            thinking: true,
         }
+    }
+
+    pub fn without_thinking(mut self) -> Self {
+        self.thinking = false;
+        self
     }
 
     pub fn healthy(&self) -> bool {
@@ -53,11 +62,14 @@ impl LlmClient {
 
     /// OpenAI-compatible chat completion against llama-server.
     pub fn chat(&self, messages: &[ChatMessage], max_tokens: u32) -> Result<String> {
-        let body = json!({
+        let mut body = json!({
             "messages": messages,
             "max_tokens": max_tokens,
             "temperature": self.temperature,
         });
+        if !self.thinking {
+            body["chat_template_kwargs"] = json!({"enable_thinking": false});
+        }
         let resp: Value = self
             .agent
             .post(&format!("{}/v1/chat/completions", self.base_url))

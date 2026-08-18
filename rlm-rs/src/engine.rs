@@ -62,8 +62,15 @@ pub fn run_rlm(
     ];
 
     let code_re = Regex::new(r"(?s)```(?:rhai|rust|js|javascript)?[ \t]*\r?\n(.*?)```").unwrap();
+    let run_started = std::time::Instant::now();
 
     for iter in 0..cfg.max_iterations {
+        // Wall-clock cap, checked at the safe boundary between iterations (an
+        // already-dispatched generation is drained, never interrupted mid-flight).
+        if cfg.max_run_seconds > 0 && run_started.elapsed().as_secs() > cfg.max_run_seconds {
+            eprintln!("[rlm] wall-clock budget ({}s) reached; requesting final answer", cfg.max_run_seconds);
+            break;
+        }
         let response = client.chat(&messages, cfg.max_tokens)?;
         messages.push(ChatMessage::new("assistant", response.clone()));
 
@@ -103,7 +110,7 @@ pub fn run_rlm(
 
     messages.push(ChatMessage::new(
         "user",
-        "Iteration limit reached. Reply now with your final answer as plain text (no code block).",
+        "Iteration or time limit reached. Reply now with your final answer as plain text (no code block).",
     ));
     let final_resp = client.chat(&messages, cfg.max_tokens)?;
     Ok(final_resp.trim().to_string())

@@ -126,7 +126,11 @@ fn main() -> Result<()> {
         cfg.max_depth = d;
     }
 
-    let client = LlmClient::new(&cfg);
+    let client = if cfg.root_thinking {
+        LlmClient::new(&cfg)
+    } else {
+        LlmClient::new(&cfg).without_thinking()
+    };
 
     // Leaf sub-calls go to the fast worker model when one is configured and reachable;
     // otherwise everything runs on the main model.
@@ -142,7 +146,7 @@ fn main() -> Result<()> {
                 worker.healthy()
             };
             if up {
-                return worker;
+                return if cfg.worker_thinking { worker } else { worker.without_thinking() };
             }
         }
         LlmClient::new(cfg)
