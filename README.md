@@ -1,385 +1,118 @@
-![airllm_logo](https://github.com/lyogavin/airllm/blob/main/assets/airllm_logo_sm.png?v=3&raw=true)
+# AirLLM + RLM Local Stack
 
-[**Quickstart**](#quickstart) | 
-[**Configurations**](#configurations) | 
-[**MacOS**](#macos) | 
-[**Example notebooks**](#example-python-notebook) | 
-[**FAQ**](#faq)
+A self-contained local inference stack built on two upstreams:
 
-**AirLLM** dramatically reduces inference memory usage, letting 70B large language models run on a single 4GB GPU card — without quantization, distillation, or pruning. You can even run **405B Llama 3.1** on **8GB**, **DeepSeek-V3 (671B)** on **~12GB**, and **Kimi K3 (2.8T)** — the largest open-source model released to date — on **under 4GB**, because sparse MoE models stream one expert at a time rather than a whole layer.
+- **[AirLLM](https://github.com/lyogavin/airllm)** — layer-streamed inference: run checkpoints far larger than VRAM by keeping one layer resident at a time. This repo is a fork; the original README lives upstream.
+- **[RLM](https://github.com/stable-release/rlm)** — Recursive Language Models: long context lives in a code environment the model navigates, not in the prompt. Ported here to Rust (`rlm-rs/`) as a single ~3 MB binary.
 
-<a href="https://github.com/lyogavin/airllm/stargazers">![GitHub Repo stars](https://img.shields.io/github/stars/lyogavin/airllm?style=social)</a>
-[![Downloads](https://static.pepy.tech/personalized-badge/airllm?period=total&units=international_system&left_color=grey&right_color=blue&left_text=downloads)](https://pepy.tech/project/airllm)
+Runs on **Windows (CUDA)** and **Apple Silicon (MLX)**.
 
-[![Code License](https://img.shields.io/badge/Code%20License-Apache_2.0-green.svg)](https://github.com/LianjiaTech/BELLE/blob/main/LICENSE)
-[![Generic badge](https://img.shields.io/badge/wechat-Anima-brightgreen?logo=wechat)](https://static.aicompose.cn/static/wecom_barcode.png?t=1671918938)
-[![Discord](https://img.shields.io/discord/1175437549783760896?logo=discord&color=7289da
-)](https://discord.gg/2xffU5sn)
-[![PyPI - AirLLM](https://img.shields.io/pypi/format/airllm?logo=pypi&color=3571a3)
-](https://pypi.org/project/airllm/)
-[![Website](https://img.shields.io/website?up_message=blog&url=https%3A%2F%2Fmedium.com%2F%40lyo.gavin&logo=medium&color=black)](https://medium.com/@lyo.gavin)
-[![Website](https://img.shields.io/badge/Gavin_Li-Blog-blue)](https://gavinliblog.com)
-[![Support me on Patreon](https://img.shields.io/endpoint.svg?url=https%3A%2F%2Fshieldsio-patreon.vercel.app%2Fapi%3Fusername%3Dgavinli%26type%3Dpatrons&style=flat)](https://patreon.com/gavinli)
-[![GitHub Sponsors](https://img.shields.io/github/sponsors/lyogavin?logo=GitHub&color=lightgray)](https://github.com/sponsors/lyogavin)
+What you get:
 
-## AI Agents Recommendation:
+- **Two-tier serving** — a large GGUF for root reasoning, a small worker model answering leaf sub-calls ~20x faster
+- **RLM harness** — recursive context navigation, persistent memory, sandboxed script environment (no filesystem/network/exec)
+- **Control plane** — loopback-only run API with bearer auth, capability gating, SSE events, cancellation
+- **AirLLM streaming** — full-precision safetensors checkpoints in under 4 GB VRAM
+- **OpenAI-compatible everywhere** — point any client (AnythingLLM, Open WebUI, ...) at any tier
 
-* [Best AI Game Sprite Generator](https://godmodeai.co)
+## Quick start
 
-* [Best AI Facial Expression Editor](https://crazyfaceai.com)
+### Windows (CUDA)
 
-* [Bloome — build & run AI agent teams in the cloud, zero setup](https://bloome.im/app?ref=G6BYnov0&utm_medium=github&utm_source=lyogavin-airllm-ivor-202606)
+```powershell
+# 1. Unpack a llama.cpp CUDA build into runtime\llama.cpp\  (needs llama-server.exe)
+# 2. Drop models in:
+#      models\your-model.gguf              main model (smallest .gguf is auto-picked)
+#      models\worker\small-model.gguf      optional fast worker
+#      models\<name>\*.safetensors         optional, for AirLLM streaming
+# 3. Build the harness
+cd rlm-rs; cargo build --release; cd ..
 
-## Updates
-[2026/07] **Kimi K3 (2.8T)** support: the largest open-source model runs on a single card in **3.72GB** of VRAM, measured end to end on one RTX 6000 Ada. Per-expert streaming loads only the experts a token actually routes to. K3 brings three requirements of its own: `pip install compressed-tensors flash-attn` (its model code mandates flash attention regardless of what you request), a CUDA 12 build of torch, since no prebuilt flash-attn wheel exists for CUDA 13 yet, and `transformers` 4.56.x, as its remote code does not load on 5.x.
+# 4. Run
+.\llm-stack.ps1 start                                  # supervised servers: 8090 main, 8091 airllm, 8092 worker
+.\rlm-rs\target\release\rlm.exe run -q "..." -c doc.txt   # one-shot RLM query (auto-starts servers itself)
+.\llm-stack.ps1 stop                                   # kill switch
+```
 
-[2026/06] **v3.0**: FP8 model support + the latest models. Run **DeepSeek-V3 (671B) on ~12GB** and **Qwen3-235B on ~3GB**, plus Qwen3, Llama 3.x/4, DeepSeek V2/V3, Phi-4, Gemma and more — all through a single `AutoModel`.
-
-[2024/08/20] v2.11.0: Support Qwen2.5
-
-[2024/08/18] v2.10.1 Support CPU inference. Support non sharded models. Thanks @NavodPeiris for the great work! 
-
-[2024/07/30] Support Llama3.1 **405B** ([example notebook](https://colab.research.google.com/github/lyogavin/airllm/blob/main/air_llm/examples/run_llama3.1_405B.ipynb)). Support **8bit/4bit quantization**.
-
-[2024/04/20] AirLLM supports Llama3 natively already. Run Llama3 70B on 4GB single GPU.
-
-[2023/12/25] v2.8.2: Support MacOS running 70B large language models.
-
-[2023/12/20] v2.7: Support AirLLMMixtral. 
-
-[2023/12/20] v2.6: Added AutoModel, automatically detect model type, no need to provide model class to initialize model.
-
-[2023/12/18] v2.5: added prefetching to overlap the model loading and compute. 10% speed improvement.
-
-[2023/12/03] added support of **ChatGLM**, **QWen**, **Baichuan**, **Mistral**, **InternLM**!
-
-[2023/12/02] added support for safetensors. Now support all top 10 models in open llm leaderboard.
-
-[2023/12/01] airllm 2.0. Support compressions: **3x run time speed up!**
-
-[2023/11/20] airllm Initial version!
-
-## Star History
-
-<a href="https://star-history.com/#lyogavin/airllm&Timeline">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/star-history-dark.png">
-    <img alt="Star History Chart" src="assets/star-history.png">
-  </picture>
-</a>
-
-## Table of Contents
-
-* [Quick start](#quickstart)
-* [Model Compression](#model-compression---3x-inference-speed-up)
-* [Configurations](#configurations)
-* [Run on MacOS](#macos)
-* [Example notebooks](#example-python-notebook)
-* [Supported Models](#supported-models)
-* [Acknowledgement](#acknowledgement)
-* [FAQ](#faq)
-
-## Quickstart
-
-### 1. Install package
-
-First, install the airllm pip package.
+### Apple Silicon (MLX)
 
 ```bash
-pip install airllm
+# 1. Serve a local model with mlx-lm (OpenAI-compatible, replaces llama-server)
+pip install mlx-lm
+HF_HUB_OFFLINE=1 python -m mlx_lm server --model /path/to/model \
+  --host 127.0.0.1 --port 8090 --chat-template-args '{"enable_thinking":false}'
+
+# 2. Build and use the harness against it
+cd rlm-rs && cargo build --release
+./target/release/rlm run --no-server -q "..." -c doc.txt
 ```
 
-### 2. Inference
+AirLLM MLX streaming classes and MTP tree-speculation work live on the
+[`agent/qwen38-mlx`](https://github.com/stable-release/airllm/tree/agent/qwen38-mlx) branch.
 
-Then, initialize AirLLMLlama2, pass in the huggingface repo ID of the model being used, or the local path, and inference can be performed similar to a regular transformer model.
+## Decide before you start
 
-(*You can also specify the path to save the splitted layered model through **layer_shards_saving_path** when init AirLLMLlama2.*
-
-```python
-from airllm import AutoModel
-
-MAX_LENGTH = 128
-# just pass a hugging face repo id — works with almost any popular model:
-model = AutoModel.from_pretrained("Qwen/Qwen3-32B")
-
-# go bigger with the exact same one line:
-#model = AutoModel.from_pretrained("Qwen/Qwen3-235B-A22B")     # 235B, runs in ~3GB
-#model = AutoModel.from_pretrained("deepseek-ai/DeepSeek-V3")  # 671B, runs in ~12GB
-
-# or use a model's local path...
-#model = AutoModel.from_pretrained("/home/ubuntu/.cache/huggingface/hub/models--Qwen--Qwen3-32B/snapshots/...")
-
-input_text = [
-        'What is the capital of United States?',
-        #'I like',
-    ]
-
-input_tokens = model.tokenizer(input_text,
-    return_tensors="pt", 
-    return_attention_mask=False, 
-    truncation=True, 
-    max_length=MAX_LENGTH, 
-    padding=False)
-           
-generation_output = model.generate(
-    input_tokens['input_ids'].cuda(), 
-    max_new_tokens=20,
-    use_cache=True,
-    return_dict_in_generate=True)
-
-output = model.tokenizer.decode(generation_output.sequences[0])
-
-print(output)
-
-```
- 
- 
-Note: During inference, the original model will first be decomposed and saved layer-wise. Please ensure there is sufficient disk space in the huggingface cache directory.
- 
-
-## Model Compression - 3x Inference Speed Up!
-
-We just added model compression based on block-wise quantization-based model compression. Which can further **speed up the inference speed** for up to **3x** , with **almost ignorable accuracy loss!** (see more performance evaluation and why we use block-wise quantization in [this paper](https://arxiv.org/abs/2212.09720))
-
-![speed_improvement](https://github.com/lyogavin/airllm/blob/main/assets/airllm2_time_improvement.png?v=2&raw=true)
-
-#### How to enable model compression speed up:
-
-* Step 1. make sure you have [bitsandbytes](https://github.com/TimDettmers/bitsandbytes) installed by `pip install -U bitsandbytes `
-* Step 2. make sure airllm verion later than 2.0.0: `pip install -U airllm` 
-* Step 3. when initialize the model, passing the argument compression ('4bit' or '8bit'):
-
-```python
-model = AutoModel.from_pretrained("garage-bAInd/Platypus2-70B-instruct",
-                     compression='4bit' # specify '8bit' for 8-bit block-wise quantization 
-                    )
-```
-
-#### What are the differences between model compression and quantization?
-
-Quantization normally needs to quantize both weights and activations to really speed things up. Which makes it harder to maintain accuracy and avoid the impact of outliers in all kinds of inputs.
-
-While in our case the bottleneck is mainly at the disk loading, we only need to make the model loading size smaller. So, we get to only quantize the weights' part, which is easier to ensure the accuracy.
-
-## Configurations
- 
-When initialize the model, we support the following configurations:
-
-* **compression**: supported options: 4bit, 8bit for 4-bit or 8-bit block-wise quantization, or by default None for no compression
-* **profiling_mode**: supported options: True to output time consumptions or by default False
-* **layer_shards_saving_path**: optionally another path to save the splitted model
-* **hf_token**: huggingface token can be provided here if downloading gated models like: *meta-llama/Llama-2-7b-hf*
-* **prefetching**: prefetching to overlap the model loading and compute. By default, turned on. For now, only AirLLMLlama2 supports this.
-* **delete_original**: if you don't have too much disk space, you can set delete_original to true to delete the original downloaded hugging face model, only keep the transformed one to save half of the disk space. 
-
-## MacOS
-
-Just install airllm and run the code the same as on linux. See more in [Quick Start](#quickstart).
-
-* make sure you installed [mlx](https://github.com/ml-explore/mlx?tab=readme-ov-file#installation) and torch
-* you probably need to install python native see more [here](https://stackoverflow.com/a/65432861/21230266)
-* only [Apple silicon](https://support.apple.com/en-us/HT211814) is supported
-
-Example [python notebook] (https://github.com/lyogavin/airllm/blob/main/air_llm/examples/run_on_macos.ipynb)
-
-
-## Example Python Notebook
-
-Example colabs here:
-
-<a target="_blank" href="https://colab.research.google.com/github/lyogavin/airllm/blob/main/air_llm/examples/run_all_types_of_models.ipynb">
-  <img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/>
-</a>
-
-#### example of other models (ChatGLM, QWen, Baichuan, Mistral, etc):
-
-<details>
-
-
-* ChatGLM:
-
-```python
-from airllm import AutoModel
-MAX_LENGTH = 128
-model = AutoModel.from_pretrained("THUDM/chatglm3-6b-base")
-input_text = ['What is the capital of China?',]
-input_tokens = model.tokenizer(input_text,
-    return_tensors="pt", 
-    return_attention_mask=False, 
-    truncation=True, 
-    max_length=MAX_LENGTH, 
-    padding=True)
-generation_output = model.generate(
-    input_tokens['input_ids'].cuda(), 
-    max_new_tokens=5,
-    use_cache= True,
-    return_dict_in_generate=True)
-model.tokenizer.decode(generation_output.sequences[0])
-```
-
-* QWen:
-
-```python
-from airllm import AutoModel
-MAX_LENGTH = 128
-model = AutoModel.from_pretrained("Qwen/Qwen-7B")
-input_text = ['What is the capital of China?',]
-input_tokens = model.tokenizer(input_text,
-    return_tensors="pt", 
-    return_attention_mask=False, 
-    truncation=True, 
-    max_length=MAX_LENGTH)
-generation_output = model.generate(
-    input_tokens['input_ids'].cuda(), 
-    max_new_tokens=5,
-    use_cache=True,
-    return_dict_in_generate=True)
-model.tokenizer.decode(generation_output.sequences[0])
-```
-
-
-* Baichuan, InternLM, Mistral, etc:
-
-```python
-from airllm import AutoModel
-MAX_LENGTH = 128
-model = AutoModel.from_pretrained("baichuan-inc/Baichuan2-7B-Base")
-#model = AutoModel.from_pretrained("internlm/internlm-20b")
-#model = AutoModel.from_pretrained("mistralai/Mistral-7B-Instruct-v0.1")
-input_text = ['What is the capital of China?',]
-input_tokens = model.tokenizer(input_text,
-    return_tensors="pt", 
-    return_attention_mask=False, 
-    truncation=True, 
-    max_length=MAX_LENGTH)
-generation_output = model.generate(
-    input_tokens['input_ids'].cuda(), 
-    max_new_tokens=5,
-    use_cache=True,
-    return_dict_in_generate=True)
-model.tokenizer.decode(generation_output.sequences[0])
-```
-
-
-</details>
-
-
-#### To request other model support: [here](https://docs.google.com/forms/d/e/1FAIpQLSe0Io9ANMT964Zi-OQOq1TJmnvP-G3_ZgQDhP7SatN0IEdbOg/viewform?usp=sf_link)
-
-
-
-## Supported Models
-
-AirLLM works out of the box with **virtually every popular open LLM** — just pass its Hugging Face ID to `AutoModel.from_pretrained(...)`. That covers all the major families:
-
-**Llama** (2 / 3 / 3.1 / 3.3 / 4) · **Qwen** (1 / 2 / 2.5 / 3, including MoE and FP8) · **DeepSeek** (V2 / V3 / R1) · **Mistral & Mixtral** · **Phi** · **Gemma** · **ChatGLM** · **Baichuan** · **InternLM** · **Yi** — and most new models the day they're released.
-
-### Tiny GPU, huge models
-
-The trick: AirLLM only ever keeps **one layer on the GPU at a time**, so the VRAM you need depends on the model's layer size — not its total size. That's how a 671B model fits on a hobbyist card:
-
-| Model | Size | GPU VRAM |
+| Decision | Options | Default |
 |---|---|---|
-| Qwen3 / Mistral / Phi (≈8B) | 8B | **~1–2 GB** |
-| Qwen3-30B / Mixtral (MoE) | 30–47B | **~1–3 GB** |
-| Qwen3-235B (MoE) | 235B | **~3 GB** |
-| Llama 3.x 70B (full precision) | 70B | **~4 GB** |
-| Llama 3.1 405B | 405B | **~8 GB** |
-| DeepSeek-V3 | **671B** | **~12 GB** |
+| Main model | any instruct GGUF; 4-bit quant recommended | smallest `.gguf` in `models\` |
+| Worker model | any small GGUF in `models\worker\`, or none | enabled if present |
+| VRAM split | `n_gpu_layers` (main) vs `worker_n_gpu_layers` | 36 / all — budget explicitly, two auto-fits overcommit and paging wrecks both |
+| Context | `ctx_size` — the RLM harness navigates long docs itself, so bigger is rarely better | 32768 |
+| Thinking | per-tier chain-of-thought; big latency cost | off everywhere |
+| Speculative decoding | `--spec-type draft-mtp` with 1-token drafts (models with an MTP head) | on |
+| API exposure | none / `rlm daemon` (loopback + bearer token) | none |
 
-Same one line of code for all of them — no special setup.
+## Parameters (`rlm-rs/rlm.config.json`)
 
-## Acknowledgement
+Created from [`rlm.config.example.json`](rlm-rs/rlm.config.example.json) on first run. Relative paths resolve against the repo root.
 
-A lot of the code are based on SimJeg's great work in the Kaggle exam competition. Big shoutout to SimJeg:
+| Key | Purpose | Default |
+|---|---|---|
+| `model_path` / `worker_model_path` | empty = auto-discover | `""` |
+| `ctx_size` / `worker_ctx` | context windows | 32768 / 8192 |
+| `n_gpu_layers` / `worker_n_gpu_layers` | GPU layer budget per tier | 36 / 99 |
+| `kv_cache_type` | KV quantization | `q8_0` |
+| `extra_server_args` | raw llama-server flags (MTP, alias, template kwargs) | see example |
+| `root_thinking` / `worker_thinking` | chain-of-thought per tier | `false` |
+| `temperature`, `max_tokens`, `sub_max_tokens` | sampling and budgets | 0.7 / 4096 / 2048 |
+| `max_iterations`, `max_depth`, `recurse_threshold` | RLM loop bounds | 12 / 2 / 30000 |
+| `max_run_seconds` | wall-clock cap per run | 900 |
+| `daemon_port`, `daemon_allow_memory`, `daemon_max_context_chars` | control plane | 8093 / false / 5M |
 
-[GitHub account @SimJeg](https://github.com/SimJeg), 
-[the code on Kaggle](https://www.kaggle.com/code/simjeg/platypus2-70b-with-wikipedia-rag), 
-[the associated discussion](https://www.kaggle.com/competitions/kaggle-llm-science-exam/discussion/446414).
+## Endpoints
 
+| Port | Service | Use |
+|---|---|---|
+| 8090 | llama.cpp, main model (`local-main`) | chat clients, RLM root |
+| 8091 | AirLLM safetensors streaming (instrumented) | full-precision reference |
+| 8092 | llama.cpp, worker (`local-worker`) | fast leaf calls, agent tools |
+| 8093 | `rlm daemon` control plane | run API + SSE events |
 
-## FAQ
+## Benchmarks
 
-### 1. MetadataIncompleteBuffer
+27B-class dense model, measured on a 16 GB VRAM consumer GPU with 32 GB system RAM and PCIe-4 NVMe.
 
-safetensors_rust.SafetensorError: Error while deserializing header: MetadataIncompleteBuffer
+| Path | Precision | Decode | VRAM |
+|---|---|---|---|
+| llama.cpp, solo | 4-bit | ~7 tok/s | ~15 GB |
+| llama.cpp, two-tier + MTP | 4-bit | ~5.5 tok/s | ~12 GB |
+| worker (4B-class) | 4-bit | 80–98 tok/s | ~3 GB |
+| llama.cpp mmap | **BF16 (~54 GB)** | **25 s/token** | ~15 GB |
+| AirLLM layer streaming | **BF16 (~54 GB)** | **57 s/token** | **3.7 GB peak** |
 
-If you run into this error, most possible cause is you run out of disk space. The process of splitting model is very disk-consuming. See [this](https://huggingface.co/TheBloke/guanaco-65B-GPTQ/discussions/12). You may need to extend your disk space, clear huggingface [.cache](https://huggingface.co/docs/datasets/cache) and rerun. 
+Notes:
 
-### 2. ValueError: max() arg is an empty sequence
+- **BF16 runs, but is disk-bound.** A dense model touches every weight per token; whatever exceeds VRAM+RAM streams from SSD each pass (~54 GB/token at ~2.7 GB/s). AirLLM's streaming trades speed for the 3.7 GB VRAM floor — full precision on tiny GPUs is a correctness reference, not a daily driver.
+- Prompt prefill is much faster than decode (~50 tok/s even at low GPU residency); long inputs are cheap, long outputs are not.
+- 1-token MTP speculative drafts add +17–27% decode on models shipping an MTP head (deeper drafts hurt on weight-edited models — acceptance drops to ~44%).
+- Disabling thinking cuts typical leaf answers from ~500 tokens to ~35 with no quality loss on retrieval-style calls; an end-to-end RLM document query dropped 197 s → 110 s.
+- The AirLLM server reports per-request `airllm_metrics` (disk/GPU bandwidth, VRAM/RAM peaks) and cumulative `GET /metrics`.
 
-Most likely you are loading QWen or ChatGLM model with Llama2 class. Try the following:
+## More
 
-For QWen model: 
+- [LOCAL_SETUP.md](LOCAL_SETUP.md) — full stack layout and rationale
+- [rlm-rs/README.md](rlm-rs/README.md) — RLM environment reference, control-plane API, security posture
 
-```python
-from airllm import AutoModel #<----- instead of AirLLMLlama2
-AutoModel.from_pretrained(...)
-```
+## License
 
-For ChatGLM model: 
-
-```python
-from airllm import AutoModel #<----- instead of AirLLMLlama2
-AutoModel.from_pretrained(...)
-```
-
-### 3. 401 Client Error....Repo model ... is gated.
-
-Some models are gated models, needs huggingface api token. You can provide hf_token:
-
-```python
-model = AutoModel.from_pretrained("meta-llama/Llama-2-7b-hf", #hf_token='HF_API_TOKEN')
-```
-
-### 4. ValueError: Asking to pad but the tokenizer does not have a padding token.
-
-Some model's tokenizer doesn't have padding token, so you can set a padding token or simply turn the padding config off:
-
- ```python
-input_tokens = model.tokenizer(input_text,
-    return_tensors="pt", 
-    return_attention_mask=False, 
-    truncation=True, 
-    max_length=MAX_LENGTH, 
-    padding=False  #<-----------   turn off padding 
-)
-```
-
-## Citing AirLLM
-
-If you find
-AirLLM useful in your research and wish to cite it, please use the following
-BibTex entry:
-
-```
-@software{airllm2023,
-  author = {Gavin Li},
-  title = {AirLLM: scaling large language models on low-end commodity computers},
-  url = {https://github.com/lyogavin/airllm/},
-  version = {0.0},
-  year = {2023},
-}
-```
-
-
-## Sponsors
-
-<a href="https://bloome.im/app?ref=G6BYnov0&utm_medium=github&utm_source=lyogavin-airllm-ivor-202606">
-  <img src="https://github.com/lyogavin/airllm/blob/main/assets/bloome.png?raw=true" alt="Bloome — Run AI Agent Teams in the Cloud" width="50%" />
-</a>
-
-### Run AI Agent Teams in the Cloud — Bloome
-
-Bloome is an AI-agent IM platform: build and run AI agent teams in the cloud with zero setup. Add a skill as an agent in a group chat, run it in one click from web or mobile, and share it with your team — think of it as a group chat where your AI assistants are teammates you can @mention and assign tasks to.
-
-👉 Try [Bloome](https://bloome.im/app?ref=G6BYnov0&utm_medium=github&utm_source=lyogavin-airllm-ivor-202606)
-
-
-## Contribution 
-
-Welcomed contributions, ideas and discussions!
-
-If you find it useful, please ⭐ or buy me a coffee! 🙏
-
-[!["Buy Me A Coffee"](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://bmc.link/lyogavinQ)
+Fork of [AirLLM](https://github.com/lyogavin/airllm) (Apache-2.0 / MIT per upstream); `rlm-rs` is MIT. RLM concept: [MIT OASYS lab](https://github.com/stable-release/rlm).
