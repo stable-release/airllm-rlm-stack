@@ -32,9 +32,12 @@ $llamaModel = if ($cfg.model_path) { Get-Item (Join-Path $root $cfg.model_path) 
     Get-ChildItem "$root\models\*.gguf" -ErrorAction SilentlyContinue |
         Where-Object { $_.Name -notmatch '^mmproj' } | Sort-Object Length | Select-Object -First 1
 }
-# First subdirectory of models\ that holds a safetensors checkpoint.
-$airllmModel = Get-ChildItem "$root\models" -Directory -ErrorAction SilentlyContinue |
-    Where-Object { (Test-Path "$($_.FullName)\*.safetensors") -and ($_.Name -ne 'worker') } | Select-Object -First 1
+# AirLLM checkpoint: config pin wins; otherwise first subdirectory of models\
+# holding a safetensors checkpoint.
+$airllmModel = if ($cfg.airllm_model_path) { Get-Item (Join-Path $root $cfg.airllm_model_path) -ErrorAction SilentlyContinue } else {
+    Get-ChildItem "$root\models" -Directory -ErrorAction SilentlyContinue |
+        Where-Object { (Test-Path "$($_.FullName)\*.safetensors") -and ($_.Name -ne 'worker') } | Select-Object -First 1
+}
 # Worker model for rlm leaf sub-calls (optional).
 $workerModel = if ($cfg.worker_model_path) { Get-Item (Join-Path $root $cfg.worker_model_path) -ErrorAction SilentlyContinue } else {
     Get-ChildItem "$root\models\worker\*.gguf" -ErrorAction SilentlyContinue |

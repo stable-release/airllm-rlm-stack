@@ -17,6 +17,7 @@
     "--chat-template-kwargs",
     "{\"enable_thinking\":false}"
   ],
+  "airllm_model_path": "",
   "worker_port": 8092,
   "worker_model_path": "",
   "worker_ctx": 8192,
