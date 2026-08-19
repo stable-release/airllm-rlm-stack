@@ -60,7 +60,9 @@ fn ensure(cfg: &RlmConfig, client: &LlmClient, spec: &ServerSpec) -> Result<bool
     if client.healthy() {
         return Ok(false);
     }
-    if !Path::new(&cfg.server_bin).exists() {
+    // A bare command name is resolved on PATH by the spawn itself; only explicit
+    // paths can be checked up front.
+    if !crate::config::is_bare_command(&cfg.server_bin) && !Path::new(&cfg.server_bin).exists() {
         bail!("llama-server not found at {}", cfg.server_bin);
     }
     if !Path::new(spec.model).exists() {

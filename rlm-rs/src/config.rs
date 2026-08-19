@@ -87,9 +87,10 @@ impl Default for RlmConfig {
     fn default() -> Self {
         // Relative paths are resolved against the repo root at load time (see resolve_paths).
         // An empty model_path auto-discovers the smallest .gguf under models\ at load time.
+        // A bare server_bin name (no path separator) is resolved on PATH.
         RlmConfig {
             model_path: String::new(),
-            server_bin: r"runtime\llama.cpp\llama-server.exe".into(),
+            server_bin: "llama-server".into(),
             host: "127.0.0.1".into(),
             port: 8090,
             // 32k: the RLM environment carries long material via peek/grep/recursion, so a
@@ -110,7 +111,7 @@ impl Default for RlmConfig {
             daemon_port: 8093,
             daemon_allow_memory: false,
             daemon_max_context_chars: 5_000_000,
-            daemon_runs_path: r"rlm-rs\runs.jsonl".into(),
+            daemon_runs_path: "runs.jsonl".into(),
             temperature: 0.7,
             // Generous caps: reasoning models spend chain-of-thought tokens against the
             // completion budget before the final answer appears.
@@ -119,7 +120,7 @@ impl Default for RlmConfig {
             max_iterations: 12,
             max_depth: 2,
             recurse_threshold: 30_000,
-            memory_path: r"rlm-rs\rlm_memory.json".into(),
+            memory_path: "rlm_memory.json".into(),
             startup_timeout_secs: 1800,
         }
     }
@@ -138,10 +139,7 @@ impl RlmConfig {
         };
         // Resolve relative paths against the repo root derived from the executable's
         // location — stable regardless of where the config file itself lives.
-        let repo_root = crate_dir()
-            .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| PathBuf::from("."));
+        let repo_root = repo_root();
         cfg.resolve_paths(&repo_root);
         if cfg.model_path.is_empty() {
             if let Some(gguf) = smallest_gguf(&repo_root.join("models")) {
@@ -164,8 +162,8 @@ impl RlmConfig {
     fn resolve_paths(&mut self, base: &Path) {
         for field in [&mut self.model_path, &mut self.server_bin, &mut self.memory_path,
                       &mut self.worker_model_path, &mut self.daemon_runs_path] {
-            if field.is_empty() {
-                continue;
+            if field.is_empty() || is_bare_command(field) {
+                continue; // empty = feature-specific default; bare name = PATH lookup
             }
             let p = PathBuf::from(&*field);
             if p.is_relative() {
@@ -183,12 +181,29 @@ impl RlmConfig {
     }
 }
 
+/// A command name with no path separators — resolved on PATH rather than the repo root.
+pub fn is_bare_command(value: &str) -> bool {
+    !value.contains('/') && !value.contains('\\')
+}
+
 /// The rlm-rs crate directory, derived from the executable's location
-/// (<repo>/rlm-rs/target/release/rlm.exe), so paths work from any working directory.
+/// (<crate>/target/release/rlm), so paths work from any working directory.
 fn crate_dir() -> PathBuf {
     std::env::current_exe()
         .ok()
         .and_then(|exe| exe.ancestors().nth(3).map(Path::to_path_buf))
         .filter(|dir| dir.join("Cargo.toml").exists())
-        .unwrap_or_else(|| PathBuf::from("rlm-rs"))
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
+/// The directory relative config paths resolve against. The crate is used in two
+/// layouts: vendored inside the AirLLM stack (resolve against the stack root, one
+/// level up) and standalone (resolve against the crate itself). The stack root is
+/// recognized by its supervisor script.
+fn repo_root() -> PathBuf {
+    let crate_dir = crate_dir();
+    match crate_dir.parent() {
+        Some(parent) if parent.join("llm-stack.ps1").exists() => parent.to_path_buf(),
+        _ => crate_dir,
+    }
 }

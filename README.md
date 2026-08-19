@@ -3,7 +3,7 @@
 A self-contained local inference stack built on two upstreams:
 
 - **[AirLLM](https://github.com/lyogavin/airllm)** — layer-streamed inference: run checkpoints far larger than VRAM by keeping one layer resident at a time. This repo is a fork; the original README lives upstream.
-- **[RLM](https://github.com/stable-release/rlm)** — Recursive Language Models: long context lives in a code environment the model navigates, not in the prompt. Ported here to Rust (`rlm-rs/`) as a single ~3 MB binary.
+- **[RLM](https://github.com/stable-release/rlm)** — Recursive Language Models: long context lives in a code environment the model navigates, not in the prompt. Ported to Rust as a single ~3 MB binary: **[rlm-rs](https://github.com/stable-release/rlm-rs)** (canonical home; vendored here as `rlm-rs/` for the one-clone experience).
 
 Runs on **Windows (CUDA)** and **Apple Silicon (MLX)**.
 

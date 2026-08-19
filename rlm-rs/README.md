@@ -1,5 +1,9 @@
 # rlm-rs — Recursive Language Model harness in Rust
 
+> Canonical standalone home: **[stable-release/rlm-rs](https://github.com/stable-release/rlm-rs)**
+> (releases, CI, contributing). This copy is vendored into the stack for the
+> one-clone experience.
+
 A Rust port of the Recursive Language Model (RLM) inference pattern from
 [stable-release/rlm](https://github.com/stable-release/rlm) (MIT OASYS lab's `rlms`
 Python package), acting as the **context and memory manager** for the local GGUF
@@ -16,7 +20,7 @@ the whole harness a single ~3 MB native binary with no Python runtime.
 
 | Python rlms                     | rlm-rs                                        |
 |---------------------------------|-----------------------------------------------|
-| OpenAI/Anthropic/vLLM clients   | OpenAI-compatible client to local llama-server |
+| hosted-API and vLLM clients     | OpenAI-compatible client to local llama-server |
 | Python REPL environment         | Rhai script environment (sandboxed, metered)  |
 | context-as-variables            | `ctx_list` / `ctx_len` / `peek` / `grep`      |
 | recursive sub-calls             | `llm(prompt)`, `llm_on(prompt, ctx, start, len)` (large slices spawn a nested RLM loop, depth-limited) |
