@@ -51,13 +51,11 @@ impl LlmClient {
     }
 
     pub fn healthy(&self) -> bool {
-        matches!(
-            self.agent
-                .get(&format!("{}/health", self.base_url))
-                .timeout(Duration::from_secs(3))
-                .call(),
-            Ok(_)
-        )
+        self.agent
+            .get(&format!("{}/health", self.base_url))
+            .timeout(Duration::from_secs(3))
+            .call()
+            .is_ok()
     }
 
     /// OpenAI-compatible chat completion against llama-server.

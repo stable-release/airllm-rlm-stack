@@ -68,6 +68,7 @@ fn context_slice(contexts: &[(String, String)], name: &str, start: i64, len: i64
 /// `client` drives the root loop's reasoning (the big model); `sub_client` serves leaf
 /// sub-calls (`llm` / single-shot `llm_on`) — point it at a small fast worker model, or
 /// pass the same client for single-model operation.
+#[allow(clippy::too_many_arguments)]
 pub fn run_rlm(
     client: &LlmClient,
     sub_client: &LlmClient,

@@ -81,6 +81,49 @@ disk. If you want AirLLM's own streamer, point it at a safetensors checkpoint in
   hits the same disk-bandwidth wall because a dense model touches every weight
   for every token.
 
+## Apple-silicon fit (sanitized measurements)
+
+On a base-class Apple-silicon host with 8 GB of unified memory, a text-only
+9B-class dense model packaged as MLX affine 4-bit/group-64 sustained **8.73
+tok/s on its first 64-token run** and **12.89 tok/s on a later warm 64-token
+run**. Both runs reported a **5.23 GB peak** and zero process swaps. The package
+held 4.692 GiB of logical weights; all 927 arrays were verified bit-for-bit
+against the source representation after repackaging.
+
+With those same packed arrays, full component streaming reached **0.317 tok/s**
+and a 4.0 GiB pinned-component plan reached **0.421 tok/s**. Pinning additional
+components crossed the memory-pressure cliff: the embedding-plus-decoder plan
+fell to **0.148 tok/s**, while streaming both endpoint matrices around resident
+decoders reached **0.229 tok/s**. The standard package is faster because it uses
+one lazy graph and memory-mapped shards instead of synchronized component loads,
+not because it was requantized.
+
+The same memory tier can run a streamed 27B-class affine-3 target with exact
+native tree verification, but at a different operating point. An isolated exact
+leaf-verifier cycle reached **0.548 tok/s** at **2.96 GiB peak**, and the first
+integrated smoke cycle produced six steady tokens in 10.800 seconds (**0.556
+tok/s**) at **2.07 GiB peak**. The backend-consistent sustained run settled at
+**0.393 tok/s** over a 30-token continuation with the same **2.07 GiB peak** and
+a fresh full-output reference pass. Widening every uncertain branch regressed to
+**0.236 tok/s** and **4.61 GiB**, so selective speculation is required. The
+single-cycle numbers are useful latency observations, not sustained-capacity
+figures. They predate the recurrence-backend consistency correction, although
+their token-level checks passed; use the `0.393 tok/s` result as the correctness
+baseline.
+
+These disclosures intentionally omit checkpoint identity, local paths, host and
+account names, OS build, timestamps, prompts, and raw logs. They are performance
+records, not claims that every model of the same parameter count will behave
+identically.
+
+For this path, start `mlx_lm.server` manually and invoke the Rust harness with
+both `--config rlm.config.mlx.example.json` and `--no-server`. The dedicated
+config disables the llama.cpp worker/autostart assumptions and caps root/leaf
+responses at 512/256 tokens. `--max-tokens` on the MLX server is a default, not
+a hard cap on the larger value a client can send, so keeping the harness config
+bounded is necessary. The complete tested two-terminal command sequence is in
+the top-level README.
+
 ## True AirLLM layer-streaming (safetensors)
 
 Safetensors checkpoints route through AirLLM's native per-layer streamer — one

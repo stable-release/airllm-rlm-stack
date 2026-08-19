@@ -184,7 +184,7 @@ fn respond_json(request: tiny_http::Request, code: u32, body: serde_json::Value)
 }
 
 fn handle(
-    mut request: tiny_http::Request,
+    request: tiny_http::Request,
     store: Arc<Store>,
     cfg: RlmConfig,
     token: Option<String>,
@@ -460,7 +460,7 @@ impl PendingExt for Option<HashMap<String, PendingRun>> {
 
 // ---------------------------------------------------------------- executor
 
-fn executor_loop(store: Arc<Store>, cfg: RlmConfig, queue_rx: mpsc::Receiver<String>) {
+fn executor_loop(store: Arc<Store>, _cfg: RlmConfig, queue_rx: mpsc::Receiver<String>) {
     for run_id in queue_rx.iter() {
         let Some(entry) = store.runs.lock().unwrap().get(&run_id).cloned() else { continue };
         let Some(pending) = PENDING.lock().unwrap().take_run(&run_id) else { continue };

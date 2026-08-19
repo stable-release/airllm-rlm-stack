@@ -44,6 +44,23 @@ auto-discovers the smallest GGUF under `models\`; an empty `worker_model_path`
 auto-discovers `models\worker\` (no worker model = single-model mode). Relative
 paths resolve against the repo root, so the checkout is location-independent.
 
+### Existing MLX server
+
+On Apple silicon, start the local MLX server separately, then use the bounded
+[MLX example config](rlm.config.mlx.example.json):
+
+```bash
+curl --fail http://127.0.0.1:8090/health
+./target/release/rlm run \
+  --config rlm.config.mlx.example.json --no-server --iters 6 \
+  -q "..." -c doc.txt
+```
+
+The `--no-server` flag prevents the harness from attempting to launch the
+Windows llama.cpp executable. Do not use `--model` in this mode; it is a GGUF
+auto-start override and does not select the model already loaded by the MLX
+endpoint.
+
 **Two-tier inference:** leaf sub-calls (`llm`, single-shot `llm_on`) run on the
 fast worker model; the root loop and nested recursive loops stay on the main
 model. Budget VRAM explicitly via `n_gpu_layers` / `worker_n_gpu_layers` — two
