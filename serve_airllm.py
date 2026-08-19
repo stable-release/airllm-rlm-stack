@@ -119,7 +119,9 @@ class Handler(BaseHTTPRequestHandler):
         temperature = float(payload.get("temperature", 0.7))
 
         tok = self.model.tokenizer
-        text = tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        template_kwargs = payload.get("chat_template_kwargs") or {}
+        text = tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=True,
+                                       **template_kwargs)
         content, reasoning, n_in, n_out, secs, metrics = self._generate(text, max_tokens, temperature)
 
         self._json(200, {

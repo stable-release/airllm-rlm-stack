@@ -27,6 +27,10 @@ pub struct RlmConfig {
     pub server_bin: String,
     pub host: String,
     pub port: u16,
+    /// Which server tiers may run: any of "main", "worker", "airllm". Tiers not listed
+    /// are never spawned or supervised — what runs is declared here, not inferred from
+    /// whatever models sit on disk. (The "airllm" entry is used by the stack supervisor.)
+    pub enabled_servers: Vec<String>,
     /// Model context window to request from llama-server.
     pub ctx_size: u32,
     /// GPU layers; null lets llama.cpp auto-fit to available VRAM.
@@ -90,6 +94,7 @@ impl Default for RlmConfig {
         // A bare server_bin name (no path separator) is resolved on PATH.
         RlmConfig {
             model_path: String::new(),
+            enabled_servers: vec!["main".into(), "worker".into(), "airllm".into()],
             server_bin: "llama-server".into(),
             host: "127.0.0.1".into(),
             port: 8090,
@@ -141,13 +146,17 @@ impl RlmConfig {
         // location — stable regardless of where the config file itself lives.
         let repo_root = repo_root();
         cfg.resolve_paths(&repo_root);
-        if cfg.model_path.is_empty() {
+        // Discovery only resolves *which file* serves an enabled tier; it never decides
+        // *what runs* — disabled tiers are skipped entirely (and stay silent).
+        if cfg.server_enabled("main") && cfg.model_path.is_empty() {
             if let Some(gguf) = smallest_gguf(&repo_root.join("models")) {
                 eprintln!("[rlm] auto-discovered model: {}", gguf.display());
                 cfg.model_path = gguf.to_string_lossy().into_owned();
             }
         }
-        if cfg.worker_port.is_some() && cfg.worker_model_path.is_empty() {
+        if !cfg.server_enabled("worker") {
+            cfg.worker_port = None;
+        } else if cfg.worker_port.is_some() && cfg.worker_model_path.is_empty() {
             match smallest_gguf(&repo_root.join("models").join("worker")) {
                 Some(gguf) => {
                     eprintln!("[rlm] auto-discovered worker model: {}", gguf.display());
@@ -174,6 +183,10 @@ impl RlmConfig {
 
     pub fn base_url(&self) -> String {
         format!("http://{}:{}", self.host, self.port)
+    }
+
+    pub fn server_enabled(&self, name: &str) -> bool {
+        self.enabled_servers.iter().any(|s| s == name)
     }
 
     pub fn default_config_path() -> PathBuf {

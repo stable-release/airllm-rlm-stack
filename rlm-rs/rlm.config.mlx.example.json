@@ -1,5 +1,6 @@
 {
   "model_path": "",
+  "enabled_servers": [],
   "server_bin": "",
   "host": "127.0.0.1",
   "port": 8090,

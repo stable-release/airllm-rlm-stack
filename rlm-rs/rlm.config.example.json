@@ -1,5 +1,6 @@
 {
   "model_path": "",
+  "enabled_servers": ["main", "worker", "airllm"],
   "server_bin": "runtime/llama.cpp/llama-server.exe",
   "host": "127.0.0.1",
   "port": 8090,

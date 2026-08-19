@@ -17,6 +17,18 @@ struct ServerSpec<'a> {
 /// Ensure the main llama-server is up on the configured port; spawn it if needed.
 /// Returns true if this call spawned the server.
 pub fn ensure_server(cfg: &RlmConfig, client: &LlmClient) -> Result<bool> {
+    if !cfg.server_enabled("main") {
+        // The tier is declared off: attach to whatever the configured port serves
+        // (e.g. an AirLLM or MLX endpoint), but never spawn a llama-server for it.
+        if client.healthy() {
+            return Ok(false);
+        }
+        anyhow::bail!(
+            "the 'main' server tier is disabled in enabled_servers and nothing is \
+             listening on port {}",
+            cfg.port
+        );
+    }
     ensure(
         cfg,
         client,
@@ -33,6 +45,9 @@ pub fn ensure_server(cfg: &RlmConfig, client: &LlmClient) -> Result<bool> {
 
 /// Ensure the worker llama-server (leaf sub-call model) is up, when configured.
 pub fn ensure_worker(cfg: &RlmConfig, worker_client: &LlmClient) -> Result<bool> {
+    if !cfg.server_enabled("worker") {
+        return Ok(false);
+    }
     let Some(port) = cfg.worker_port else { return Ok(false) };
     // Clean alias for OpenAI-compatible clients, and no-thinking as the template
     // default (rlm's own requests still choose explicitly per request).

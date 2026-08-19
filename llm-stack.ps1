@@ -25,6 +25,8 @@ $stackLog = "$rt\stack.log"
 # Shared server configuration (falls back to the committed example).
 $cfgPath = if (Test-Path "$root\rlm-rs\rlm.config.json") { "$root\rlm-rs\rlm.config.json" } else { "$root\rlm-rs\rlm.config.example.json" }
 $cfg = Get-Content $cfgPath -Raw | ConvertFrom-Json
+# What runs is declared in the config, not inferred from the models directory.
+$enabled = if ($cfg.enabled_servers) { @($cfg.enabled_servers) } else { @('main', 'worker', 'airllm') }
 
 # Smallest non-projector GGUF directly under models\ (quants sort below full precision),
 # unless the config pins one.
@@ -105,7 +107,10 @@ function Supervise {
     $started = @{ llama = $null; airllm = $null; worker = $null }   # last (re)start time, for the health grace period
     $unhealthy = @{ llama = 0; airllm = 0; worker = 0 }
 
-    $names = @('llama', 'airllm') + $(if ($workerModel) { @('worker') } else { @() })
+    $names = @()
+    if ($enabled -contains 'main')                     { $names += 'llama' }
+    if (($enabled -contains 'airllm') -and $airllmModel) { $names += 'airllm' }
+    if (($enabled -contains 'worker') -and $workerModel) { $names += 'worker' }
     while (-not (Test-Path $stopFlag)) {
         foreach ($name in $names) {
             $proc = switch ($name) { 'llama' { Get-LlamaProc } 'airllm' { Get-AirllmProc } 'worker' { Get-WorkerProc } }
@@ -150,10 +155,14 @@ switch ($cmd) {
 
     'start' {
         if (Get-SupervisorProc) { Write-Output "already running — use status"; break }
-        if (-not $llamaModel)  { Write-Output "no .gguf found in models\ — add a model first"; break }
+        if (($enabled -contains 'main') -and (-not $llamaModel)) { Write-Output "main tier enabled but no .gguf found in models\"; break }
         Remove-Item $stopFlag -Force -ErrorAction SilentlyContinue
         Start-Process powershell -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "$root\llm-stack.ps1", 'supervise' -WindowStyle Hidden
-        Write-Output "stack starting. llama.cpp:8090 ($($llamaModel.Name)); airllm:8091 ($(if($airllmModel){$airllmModel.Name}else{'no safetensors dir found'})). Check: .\llm-stack.ps1 status"
+        $desc = @()
+        if ($enabled -contains 'main')   { $desc += "main:$($cfg.port) ($($llamaModel.Name))" }
+        if (($enabled -contains 'airllm') -and $airllmModel) { $desc += "airllm:$airllmPort ($($airllmModel.Name))" }
+        if (($enabled -contains 'worker') -and $workerModel) { $desc += "worker:$workerPort ($($workerModel.Name))" }
+        Write-Output "stack starting: $($desc -join '; '). Check: .\llm-stack.ps1 status"
     }
 
     'stop' {
@@ -178,11 +187,11 @@ switch ($cmd) {
         $sup = Get-SupervisorProc
         Write-Output ("supervisor : " + $(if ($sup) { "running (pid $($sup.ProcessId))" } else { "not running" }))
         $l = Get-LlamaProc
-        Write-Output ("llama:$($cfg.port) : " + $(if ($l) { "pid $($l.ProcessId), healthy=$(Test-Health $cfg.port)" } else { "down" }))
+        Write-Output ("llama:$($cfg.port) : " + $(if ($enabled -notcontains 'main') { "disabled" } elseif ($l) { "pid $($l.ProcessId), healthy=$(Test-Health $cfg.port)" } else { "down" }))
         $w = Get-WorkerProc
-        Write-Output ("worker:$workerPort" + ": " + $(if ($w) { "pid $($w.ProcessId), healthy=$(Test-Health $workerPort)" } elseif ($workerModel) { "down" } else { "no worker model in models\worker\" }))
+        Write-Output ("worker:$workerPort" + ": " + $(if ($enabled -notcontains 'worker') { "disabled" } elseif ($w) { "pid $($w.ProcessId), healthy=$(Test-Health $workerPort)" } elseif ($workerModel) { "down" } else { "no worker model in models\worker\" }))
         $a = Get-AirllmProc
-        Write-Output ("airllm:$airllmPort" + ": " + $(if ($a) { "pid $($a.ProcessId), healthy=$(Test-Health $airllmPort)" } else { "down" }))
+        Write-Output ("airllm:$airllmPort" + ": " + $(if ($enabled -notcontains 'airllm') { "disabled" } elseif ($a) { "pid $($a.ProcessId), healthy=$(Test-Health $airllmPort)" } else { "down" }))
         Write-Output ("VRAM       : " + (nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader))
     }
 }
